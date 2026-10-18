@@ -1,5 +1,5 @@
 /**
- * pi-casebook: connects a pi session to casebook (tackle.tools).
+ * pi-casebook: connects a pi session to casebook (casebook.tools).
  *
  *  - bash tool calls that invoke git or gh are journaled with this pi session
  *    (`casebook record --harness pi`); casebook keeps verbs and targets, never the
