@@ -29,6 +29,8 @@ function fakePi() {
     getContextUsage: () => ({ tokens: 12000, contextWindow: 32000, percent: 37 }),
     ui: { setStatus: () => {} },
   };
+  let thinkingLevel = "medium";
+  (pi as Record<string, unknown>).getThinkingLevel = () => thinkingLevel;
   async function fire(event: string, payload: unknown = {}, overrideCtx?: unknown) {
     const out: unknown[] = [];
     for (const h of handlers.get(event) ?? []) out.push(await h(payload, overrideCtx ?? ctx));
@@ -64,7 +66,8 @@ test("it subscribes to exactly the lifecycle events it needs", async () => {
   createHarness(pi as never, { raiseAttention: noopBell, tmux: () => ctxTmux });
   const subscribed = events().sort();
   assert.deepEqual(subscribed, [
-    "agent_settled", "agent_start", "session_info_changed", "session_shutdown", "session_start", "turn_end",
+    "agent_settled", "agent_start", "model_select", "session_info_changed", "session_shutdown", "session_start",
+    "thinking_level_select", "turn_end",
   ].sort());
 });
 
@@ -129,7 +132,7 @@ test("session_start injects a plain registration line without triggering a turn"
 
 test("turn_end writes the state file", async () => {
   const { pi, fire } = fakePi();
-  const written: Array<{ pct: number; model: string }> = [];
+  const written: Array<{ pct: number | undefined; model: string }> = [];
   createHarness(pi as never, { raiseAttention: noopBell,
     tmux: () => ctxTmux,
     writeState: (o) => written.push({ pct: o.contextPct, model: o.model }),
@@ -137,6 +140,31 @@ test("turn_end writes the state file", async () => {
   });
   await fire("turn_end", {});
   assert.deepEqual(written, [{ pct: 37, model: "Qwen3.8-27B" }]);
+});
+
+test("turn_end writes the thinking level of a reasoning model", async () => {
+  const { pi, fire, ctx } = fakePi();
+  const written: Array<{ thinking?: string }> = [];
+  createHarness(pi as never, { raiseAttention: noopBell, tmux: () => ctxTmux, writeState: (o) => written.push(o), ringBell: noopBell });
+  await fire("turn_end", {}, { ...ctx, model: { id: "claude-opus-5-5", reasoning: true } });
+  await fire("turn_end", {}, ctx);
+  assert.deepEqual(written.map((o) => o.thinking), ["medium", undefined]);
+});
+
+test("a model or thinking switch rewrites the state at once, keeping the last context percent", async () => {
+  const { pi, fire, ctx } = fakePi();
+  const written: Array<{ contextPct?: number; model: string; thinking?: string }> = [];
+  createHarness(pi as never, { raiseAttention: noopBell, tmux: () => ctxTmux, writeState: (o) => written.push(o), ringBell: noopBell });
+  const reasoning = { id: "claude-opus-5-5", reasoning: true };
+  const noUsage = { ...ctx, model: reasoning, getContextUsage: () => ({ tokens: null, contextWindow: 1, percent: null }) };
+  await fire("model_select", { model: reasoning }, noUsage);
+  await fire("turn_end", {}, { ...ctx, model: reasoning });
+  await fire("thinking_level_select", { level: "high" }, noUsage);
+  assert.deepEqual(written, [
+    { ctx: ctxTmux, contextPct: undefined, model: "claude-opus-5-5", thinking: "medium" },
+    { ctx: ctxTmux, contextPct: 37, model: "claude-opus-5-5", thinking: "medium" },
+    { ctx: ctxTmux, contextPct: 37, model: "claude-opus-5-5", thinking: "high" },
+  ]);
 });
 
 test("turn_end skips the write when getContextUsage returns undefined, but still rings the bell path", async () => {

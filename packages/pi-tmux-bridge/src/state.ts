@@ -21,8 +21,12 @@ export function stateKey(ctx: TmuxContext): string {
 
 export function writeState(opts: {
   ctx: TmuxContext;
-  contextPct: number;
+  // Undefined until pi knows it (a model switch before the first turn);
+  // written empty so the reader shows no context badge rather than a fake 0.
+  contextPct: number | undefined;
   model: string;
+  // The thinking level of a reasoning model; undefined for any other model.
+  thinking?: string;
   dir?: string;
 }): void {
   const dir = opts.dir ?? defaultDir();
@@ -30,10 +34,12 @@ export function writeState(opts: {
     mkdirSync(dir, { recursive: true });
     // The file is line-oriented key=value and the reader splits on the first
     // '='. A newline in a value would forge a key, so values are flattened.
-    const model = opts.model.replace(/[\r\n]+/g, " ");
+    const flat = (value: string) => value.replace(/[\r\n]+/g, " ");
+    const pct = opts.contextPct === undefined ? "" : String(Math.trunc(opts.contextPct));
     const body =
-      `context_pct=${Math.trunc(opts.contextPct)}\n` +
-      `model=${model}\n` +
+      `context_pct=${pct}\n` +
+      `model=${flat(opts.model)}\n` +
+      `thinking=${flat(opts.thinking ?? "")}\n` +
       `updated=${Math.floor(Date.now() / 1000)}\n` +
       `pane=${opts.ctx.pane}\n` +
       `socket=${opts.ctx.socket}\n`;
