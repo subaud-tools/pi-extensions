@@ -101,8 +101,9 @@ claim is a protocol error — the extension logs a `{ diag }` and still answers
 `{ resend: "done" }` without a claim; the daemon requires 0.8.0, so this never
 happens in the release.
 
-A phone prompt is answered exactly once: `{ accepted }` once pi took the
-text, or `{ refused }` with `turn_running` (a turn is running, or pi is not
+A phone prompt is answered exactly once: `{ accepted }` once pi-hail handed the
+text to pi (optimistic: pi's own preflight may still drop it, unobserved, see the
+CHANGELOG), or `{ refused }` with `turn_running` (a turn is running, or pi is not
 idle) or `error` (injection threw). The prompt's `attempt` is an **opaque**
 token, like the resend claim: pi-hail echoes it unchanged on whichever reply
 answers that inject, so the daemon can tell a late reply for a superseded
