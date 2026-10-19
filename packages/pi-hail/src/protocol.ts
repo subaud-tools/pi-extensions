@@ -57,9 +57,11 @@ export type Outbound =
   | { turn: "start" | "end" }
   | { lock: "held" | "released" }
   | { exit: { code: number } }
-  | { refused: { requestId: string; reason: "turn_running" } }
-  | { refused: { requestId: string; reason: "error"; error: string } }
-  | { accepted: { requestId: string } }
+  // Replies about a prompt echo the daemon's opaque `attempt` (0.8.0) unchanged
+  // when the prompt carried one; a prompt without one gets no `attempt` key.
+  | { refused: { requestId: string; reason: "turn_running"; attempt?: string } }
+  | { refused: { requestId: string; reason: "error"; error: string; attempt?: string } }
+  | { accepted: { requestId: string; attempt?: string } }
   | { connection: "connect" | "disconnect" }
   | { resend: "done"; error?: string; claim?: string }
   | { diag: { where: string; message: string } }
@@ -83,7 +85,7 @@ export type Outbound =
 
 /** Daemon → extension, one JSON object per line after register. */
 export type Inbound =
-  | { prompt: { text: string; from: string; requestId: string } }
+  | { prompt: { text: string; from: string; requestId: string; attempt?: string } }
   | { presence: { phones: Phone[] } }
   | { answer: { requestId: string; value: unknown } }
   | { ctl: "stop" }

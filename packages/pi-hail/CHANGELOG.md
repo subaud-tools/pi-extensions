@@ -2,6 +2,16 @@
 
 ## 0.8.0
 
+- **The daemon's opaque prompt `attempt` is echoed on every reply about that
+  prompt.** The daemon's `{ prompt: { text, from, requestId } }` now carries an
+  opaque `attempt` (a string). pi-hail echoes it unchanged on whichever reply
+  answers that inject: `{ accepted: { requestId, attempt } }`,
+  `{ refused: { requestId, reason: "turn_running", attempt } }` and
+  `{ refused: { requestId, reason: "error", error, attempt } }`, exactly as the
+  resend `claim` is echoed. The attempt is never inspected or mutated; two
+  prompts each carry their own attempt on their own reply. A prompt without an
+  `attempt` is answered with no `attempt` key (the daemon tolerates it and
+  completes the attempt it is tracking).
 - **The daemon's opaque resend `claim` is echoed on catch-up (decided
   2026-10-13).** The daemon's `{ resend: { since, limit } }` now carries an
   opaque `claim` (a string). pi-hail echoes it unchanged as a sibling on every

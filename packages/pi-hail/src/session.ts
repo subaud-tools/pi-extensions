@@ -474,7 +474,17 @@ export class Session {
     const m = msg as Record<string, unknown>;
     if (m == null || typeof m !== "object") return;
     if ("prompt" in m) {
-      const prompt = m.prompt as { text: string; from: string; requestId: string };
+      const prompt = m.prompt as {
+        text: string;
+        from: string;
+        requestId: string;
+        attempt?: string;
+      };
+      // The daemon's opaque `attempt` names THIS inject; every reply about the
+      // prompt echoes it unchanged (as the resend claim is), so the daemon can
+      // tell a late reply for a superseded attempt from the current one. A
+      // prompt without one echoes nothing extra (the daemon tolerates it).
+      const attempt = typeof prompt.attempt === "string" ? { attempt: prompt.attempt } : {};
       // Refuse when a turn is already running — whether pi-hail knows it owns a
       // local turn, OR pi itself reports it is not idle (still streaming). pi's
       // sendUserMessage returns void and swallows its own busy rejection, so
@@ -482,7 +492,9 @@ export class Session {
       // refusal path, not two.
       if (this.phase === "local_turn" || this.deps.isIdle?.() === false) {
         // The person owns the turn; refuse rather than drop or queue (spec §4).
-        this.sendBoundary({ refused: { requestId: prompt.requestId, reason: "turn_running" } });
+        this.sendBoundary({
+          refused: { requestId: prompt.requestId, reason: "turn_running", ...attempt },
+        });
         return;
       }
       // Attribute the next turn_start to the phone, then inject the prompt as
@@ -497,11 +509,16 @@ export class Session {
         this.pendingPhonePrompt = false;
         this.phase = "idle";
         this.sendBoundary({
-          refused: { requestId: prompt.requestId, reason: "error", error: errorMessage(err) },
+          refused: {
+            requestId: prompt.requestId,
+            reason: "error",
+            error: errorMessage(err),
+            ...attempt,
+          },
         });
         return;
       }
-      this.sendBoundary({ accepted: { requestId: prompt.requestId } });
+      this.sendBoundary({ accepted: { requestId: prompt.requestId, ...attempt } });
       return;
     }
     if ("presence" in m) {

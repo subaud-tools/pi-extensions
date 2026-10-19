@@ -150,6 +150,73 @@ test("an injected phone prompt replies { accepted:{requestId} }", () => {
   assert.deepEqual(lastSend(deps), { accepted: { requestId: "r9" } });
 });
 
+// 0.8.0 — the daemon's opaque prompt `attempt` is echoed unchanged on the
+// { accepted } that answers THAT inject, exactly as the resend claim is echoed.
+test("an injected prompt with attempt echoes it on { accepted }", () => {
+  const deps = fakeDeps();
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1", attempt: "a1" } });
+  assert.deepEqual(lastSend(deps), { accepted: { requestId: "r1", attempt: "a1" } });
+});
+
+// 0.8.0 — the busy refusal carries the inject's attempt so the daemon can tell
+// which attempt it completes.
+test("a busy prompt with attempt echoes it on { refused turn_running }", () => {
+  const deps = fakeDeps();
+  deps.isIdle = () => false;
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1", attempt: "a1" } });
+  assert.deepEqual(lastSend(deps), {
+    refused: { requestId: "r1", reason: "turn_running", attempt: "a1" },
+  });
+});
+
+// 0.8.0 — the injection-error refusal carries the attempt too.
+test("a prompt whose injection throws echoes the attempt on { refused error }", () => {
+  const sent: unknown[] = [];
+  const deps = {
+    send: (o: unknown) => sent.push(o),
+    sendUserMessage: () => {
+      throw new Error("boom");
+    },
+    ui: { setStatus: () => {}, notify: () => {}, holdInput: () => {} },
+    getEntries: () => [],
+  };
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1", attempt: "a1" } });
+  assert.deepEqual(sent, [
+    { refused: { requestId: "r1", reason: "error", error: "boom", attempt: "a1" } },
+  ]);
+});
+
+// 0.8.0 — two prompts a1 then a2: each reply carries its OWN attempt, never the
+// other's.
+test("two prompts echo their own attempts (a1 accepted, a2 refused)", () => {
+  const deps = fakeDeps();
+  let idle = true;
+  deps.isIdle = () => idle;
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "one", from: "p1", requestId: "r1", attempt: "a1" } });
+  idle = false; // pi is now streaming the first prompt; the next one is busy
+  s.onInbound({ prompt: { text: "two", from: "p1", requestId: "r2", attempt: "a2" } });
+  const sent = deps.send.calls.map((c) => c[0]);
+  assert.deepEqual(sent[0], { accepted: { requestId: "r1", attempt: "a1" } });
+  assert.deepEqual(sent.at(-1), {
+    refused: { requestId: "r2", reason: "turn_running", attempt: "a2" },
+  });
+});
+
+// 0.8.0 — a prompt without an attempt echoes nothing extra (the daemon
+// tolerates it: the completion names the tracked attempt).
+test("a prompt without attempt echoes no attempt key", () => {
+  const deps = fakeDeps();
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1" } });
+  const reply = lastSend(deps) as { accepted: Record<string, unknown> };
+  assert.deepEqual(reply, { accepted: { requestId: "r1" } });
+  assert.equal("attempt" in reply.accepted, false);
+});
+
 // Guards (D2'): if injection throws, the prompt is refused with reason 'error'
 // carrying the message, and the phase is not left stuck on the phone.
 test("a phone prompt whose sendUserMessage throws replies { refused reason:'error' }", () => {
