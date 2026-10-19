@@ -17,12 +17,13 @@ test("characters outside the safe set become underscores", () => {
   assert.equal(stateKey({ socket: "proj/weird name", pane: "%3" }), "proj_weird_name_3");
 });
 
-test("writeState emits exactly the five keys the reader parses, in order", () => {
+test("writeState emits exactly the six keys the reader parses, in order", () => {
   const dir = mkdtempSync(join(tmpdir(), "harness-state-"));
-  writeState({ ctx, contextPct: 42, model: "Qwen3.8-27B", dir });
+  writeState({ ctx, contextPct: 42, model: "Qwen3.8-27B", thinking: "medium", dir });
   const body = readFileSync(join(dir, "proj-pi_47"), "utf-8");
   const keys = body.trim().split("\n").map((l) => l.split("=")[0]);
-  assert.deepEqual(keys, ["context_pct", "model", "updated", "pane", "socket"]);
+  assert.deepEqual(keys, ["context_pct", "model", "thinking", "updated", "pane", "socket"]);
+  assert.match(body, /^thinking=medium$/m);
   assert.match(body, /^context_pct=42$/m);
   assert.match(body, /^model=Qwen3\.8-27B$/m);
   assert.match(body, /^pane=%47$/m);
@@ -51,4 +52,12 @@ test("removeState deletes the file, and is safe when it is already gone", () => 
   removeState(ctx, dir);
   assert.ok(!existsSync(path));
   removeState(ctx, dir); // must not throw
+});
+
+test("an unknown context percent and no thinking level are written empty, never as 0", () => {
+  const dir = mkdtempSync(join(tmpdir(), "harness-state-"));
+  writeState({ ctx, contextPct: undefined, model: "m", dir });
+  const body = readFileSync(join(dir, "proj-pi_47"), "utf-8");
+  assert.match(body, /^context_pct=$/m);
+  assert.match(body, /^thinking=$/m);
 });

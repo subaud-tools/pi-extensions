@@ -14,7 +14,12 @@ type Deps = {
   tmux?: () => TmuxContext | undefined;
   runTmux?: (socket: string, args: string[]) => string | undefined;
   runMuster?: Run;
-  writeState?: (opts: { ctx: TmuxContext; contextPct: number; model: string }) => void;
+  writeState?: (opts: {
+    ctx: TmuxContext;
+    contextPct: number | undefined;
+    model: string;
+    thinking?: string;
+  }) => void;
   removeState?: (ctx: TmuxContext) => void;
   ringBell?: (ctx: TmuxContext) => void;
   raiseAttention?: (ctx: TmuxContext) => void;
@@ -65,6 +70,12 @@ export function createHarness(pi: any, deps: Deps = {}): void {
   // mail stays unread. Scoped to this createHarness call so each session
   // (and each test) starts clean.
   let stopHookActive = false;
+
+  // The last context percent written to the state file, carried into the
+  // rewrite a model or thinking switch makes before the next turn ends.
+  let lastContextPct: number | undefined;
+  const thinkingFor = (model: any): string | undefined =>
+    model?.reasoning ? pi.getThinkingLevel?.() : undefined;
 
   // Guard for session_info_changed: the alias muster last confirmed for this
   // pane, whether from our own become() or simply the last name we acted on.
@@ -193,12 +204,31 @@ export function createHarness(pi: any, deps: Deps = {}): void {
     try {
       const usage = ctx.getContextUsage?.();
       if (usage != null && usage.percent != null) {
-        writeState({ ctx: t, contextPct: usage.percent, model: ctx.model.id });
+        lastContextPct = usage.percent;
+        writeState({ ctx: t, contextPct: usage.percent, model: ctx.model.id, thinking: thinkingFor(ctx.model) });
       }
     } catch {
       // Best-effort: the meter is not worth losing the bell over.
     }
     ringBell(t);
+  }));
+
+  // A model or thinking switch rewrites the state at once, so the tmux badge
+  // follows /model and the thinking toggle instead of waiting for a turn.
+  // pi has no fresh context figure yet, so the last one written carries over.
+  const writeSelection = (ctx: any, model: any, thinking: string | undefined) => {
+    if (!ownsPane(ctx) || !model?.id) return;
+    const t = getTmux();
+    if (!t) return;
+    writeState({ ctx: t, contextPct: lastContextPct, model: model.id, thinking });
+  };
+
+  pi.on("model_select", (event: any, ctx: any) => safe(() => {
+    writeSelection(ctx, event?.model, thinkingFor(event?.model));
+  }));
+
+  pi.on("thinking_level_select", (event: any, ctx: any) => safe(() => {
+    writeSelection(ctx, ctx.model, ctx.model?.reasoning ? event?.level : undefined);
   }));
 
   pi.on("agent_settled", (_event: unknown, ctx: any) => safe(() => {
