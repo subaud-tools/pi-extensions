@@ -28,7 +28,7 @@ function recorder<A extends unknown[]>(): Recorder<A> {
 /** Reusable fake dependency set. Later tasks extend this. */
 export function fakeDeps() {
   const send = recorder<[unknown]>();
-  const sendUserMessage = recorder<[string]>();
+  const sendUserMessage = recorder<[string, { deliverAs: "steer" | "followUp" }?]>();
   const setStatus = recorder<[string | undefined]>();
   const notify = recorder<[string, ("info" | "warning" | "error")?]>();
   const holdInput = recorder<[boolean]>();

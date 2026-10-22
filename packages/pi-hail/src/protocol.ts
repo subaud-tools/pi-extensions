@@ -85,7 +85,7 @@ export type Outbound =
 
 /** Daemon → extension, one JSON object per line after register. */
 export type Inbound =
-  | { prompt: { text: string; from: string; requestId: string; attempt?: string } }
+  | { prompt: { text: string; from: string; requestId: string; attempt?: string; deliverAs?: "steer" | "followUp" } }
   | { presence: { phones: Phone[] } }
   | { answer: { requestId: string; value: unknown } }
   | { ctl: "stop" }

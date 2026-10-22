@@ -2,6 +2,8 @@
 
 ## 0.8.0
 
+- Phone Steer and follow-up prompts use pi’s native delivery options while busy, without claiming the next turn; idle prompts retain normal phone ownership.
+
 - **The daemon's opaque prompt `attempt` is echoed on every reply about that
   prompt.** The daemon's `{ prompt: { text, from, requestId } }` now carries an
   opaque `attempt` (a string). pi-hail echoes it unchanged on whichever reply

@@ -86,12 +86,13 @@ export interface SessionDeps {
   /** → daemon */
   send: (obj: unknown) => void;
   /** pi.sendUserMessage */
-  sendUserMessage: (text: string) => void;
+  sendUserMessage: (text: string, options?: { deliverAs: "steer" | "followUp" }) => void;
   /**
    * pi's own idle check (ctx.isIdle()). pi's sendUserMessage returns void and
    * swallows its own busy rejection, so a phone prompt injected while pi is
    * streaming would still reply { accepted } \u2014 a false positive. Consult this
-   * BEFORE injecting: if pi is not idle, refuse via the same turn_running path.
+   * BEFORE injecting: if pi is not idle, refuse plain prompts via turn_running
+   * or deliver explicit steer/followUp prompts through pi’s native queue.
    * Absent (older wiring) means assume idle.
    */
   isIdle?: () => boolean;
@@ -479,35 +480,39 @@ export class Session {
         from: string;
         requestId: string;
         attempt?: string;
+        deliverAs?: "steer" | "followUp";
       };
       // The daemon's opaque `attempt` names THIS inject; every reply about the
       // prompt echoes it unchanged (as the resend claim is), so the daemon can
       // tell a late reply for a superseded attempt from the current one. A
       // prompt without one echoes nothing extra (the daemon tolerates it).
       const attempt = typeof prompt.attempt === "string" ? { attempt: prompt.attempt } : {};
-      // Refuse when a turn is already running — whether pi-hail knows it owns a
-      // local turn, OR pi itself reports it is not idle (still streaming). pi's
-      // sendUserMessage returns void and swallows its own busy rejection, so
-      // without this check an { accepted } reply could be a false positive. One
-      // refusal path, not two.
-      if (this.phase === "local_turn" || this.deps.isIdle?.() === false) {
-        // The person owns the turn; refuse rather than drop or queue (spec §4).
+      const busy = this.phase === "local_turn" || this.deps.isIdle?.() === false;
+      const deliverAs = prompt.deliverAs === "steer" || prompt.deliverAs === "followUp"
+        ? prompt.deliverAs
+        : undefined;
+      // Plain prompts still refuse busy injection; explicit steering/follow-up
+      // uses pi's native queue instead, without claiming the next turn.
+      if (busy && !deliverAs) {
         this.sendBoundary({
           refused: { requestId: prompt.requestId, reason: "turn_running", ...attempt },
         });
         return;
       }
-      // Attribute the next turn_start to the phone, then inject the prompt as
-      // input. Acknowledge delivery (spec D2'): { accepted } on success, or
-      // { refused reason:'error' } if injection throws \u2014 never a silent drop.
-      this.pendingPhonePrompt = true;
-      this.phase = "phone_turn";
+      const queued = busy && deliverAs;
+      if (!queued) {
+        this.pendingPhonePrompt = true;
+        this.phase = "phone_turn";
+      }
       try {
-        this.deps.sendUserMessage(prompt.text);
+        if (queued) this.deps.sendUserMessage(prompt.text, { deliverAs: queued });
+        else this.deps.sendUserMessage(prompt.text);
       } catch (err) {
-        // Injection failed: don't leave the session stuck on the phone.
-        this.pendingPhonePrompt = false;
-        this.phase = "idle";
+        // A failed queued injection must not disturb the running turn.
+        if (!queued) {
+          this.pendingPhonePrompt = false;
+          this.phase = "idle";
+        }
         this.sendBoundary({
           refused: {
             requestId: prompt.requestId,

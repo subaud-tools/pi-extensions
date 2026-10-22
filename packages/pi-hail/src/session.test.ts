@@ -975,3 +975,33 @@ test("a boundary frame is written even under backpressure, after flushing pendin
   assert.equal(first.event?.type, "message_update");
   assert.deepEqual(sent[1], { turn: "start" });
 });
+
+for (const deliverAs of ["steer", "followUp"] as const) {
+  for (const busyVia of ["local_turn", "isIdle"] as const) {
+    test(`busy via ${busyVia}: ${deliverAs} is accepted with attempt without owning next turn`, () => {
+      const deps = fakeDeps();
+      const s = new Session(deps);
+      if (busyVia === "local_turn") s.turnStart();
+      else deps.isIdle = () => false;
+      s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1", attempt: "a1", deliverAs } });
+      assert.deepEqual(deps.sendUserMessage.calls, [["hi", { deliverAs }]]);
+      assert.deepEqual(lastSend(deps), { accepted: { requestId: "r1", attempt: "a1" } });
+      assert.equal(s.submitLocalInput("local"), true);
+      s.turnEnd();
+      s.turnStart();
+      assert.equal(s.submitLocalInput("next local"), true);
+      assert.equal(deps.send.calls.some(([frame]) => (frame as { lock?: string }).lock === "held"), false);
+    });
+  }
+
+  test(`idle: ${deliverAs} injects normally and owns the next turn`, () => {
+    const deps = fakeDeps();
+    const s = new Session(deps);
+    s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1", attempt: "a1", deliverAs } });
+    assert.deepEqual(deps.sendUserMessage.calls, [["hi"]]);
+    assert.deepEqual(lastSend(deps), { accepted: { requestId: "r1", attempt: "a1" } });
+    s.turnStart();
+    assert.equal(s.submitLocalInput("local"), false);
+    assert.equal(deps.send.calls.some(([frame]) => (frame as { lock?: string }).lock === "held"), true);
+  });
+}
