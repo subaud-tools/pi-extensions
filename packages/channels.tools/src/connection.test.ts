@@ -394,3 +394,19 @@ test("closeAll clears the session id, so a later connectAll without one spawns u
     await mgr.closeAll();
   }
 });
+
+test("report sends notifications/channels/report to the named server only", async () => {
+  const { mgr, logs } = manager();
+  const env = { FAKE_RECORD_REPORTS: "1" };
+  const conns = await mgr.connectAll({
+    diazo: { command: process.execPath, args: [FAKE], env },
+    other: { command: process.execPath, args: [FAKE], env },
+  });
+  mgr.report("diazo", { event: "landed", report: "t7" });
+  mgr.report("nobody", { event: "held", report: "t1" });
+  const text = async (name: string) => identityOf(conns.find((c) => c.name === name)!);
+  assert.equal(await text("diazo"), `reports:[{"event":"landed","report":"t7"}]`);
+  assert.equal(await text("other"), "reports:[]");
+  assert.ok(logs.some((l) => /nobody/.test(l)), `a report to a server that is not live is logged, got: ${logs.join(" | ")}`);
+  await mgr.closeAll();
+});

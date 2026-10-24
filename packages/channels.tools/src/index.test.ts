@@ -482,3 +482,85 @@ test("a registerTool failure during session_start does not block the mail gate f
     "mail must still be delivered even though session_start's registerTool step threw");
   await fire("session_shutdown");
 });
+
+// The lifecycle reports (notifications/channels/report): an event whose meta
+// carries a `report` token is reported back to its server as held, landed and
+// turn_ended. The fake server answers fake_status with what it received.
+async function reportsOf(tools: Map<string, ToolDef>): Promise<unknown[]> {
+  const result = (await tools.get("fake_status")!.execute("c", {})) as { content: Array<{ text: string }> };
+  return JSON.parse(result.content[0].text.replace(/^reports:/, ""));
+}
+
+function reportingFake(report?: string) {
+  const env: Record<string, string> = { FAKE_PUSH_AFTER_MS: "50", FAKE_RECORD_REPORTS: "1" };
+  if (report !== undefined) env.FAKE_PUSH_REPORT = report;
+  return () => ({ fake: { command: process.execPath, args: [FAKE], env } });
+}
+
+test("an event with a report token held during a turn is reported held", async () => {
+  const { pi, fire, tools } = fakePi();
+  createExtension(pi as never, { env: {}, loadConfig: reportingFake("t7") });
+  await fire("session_start", { reason: "startup" });
+  await fire("agent_start");
+  await new Promise((r) => setTimeout(r, 500));
+  assert.deepEqual(await reportsOf(tools), [{ event: "held", report: "t7" }]);
+  await fire("session_shutdown");
+});
+
+test("an event is reported landed once, when its envelope is in a turn's context", async () => {
+  const { pi, fire, tools, customs } = fakePi();
+  createExtension(pi as never, { env: {}, loadConfig: reportingFake("t7") });
+  await fire("session_start", { reason: "startup" });
+  await new Promise((r) => setTimeout(r, 500));
+  assert.deepEqual(await reportsOf(tools), [], "delivered, but not yet in a turn");
+  const envelope = (customs[0].msg as { content: string }).content;
+  await fire("context", { messages: [{ role: "user", content: "hi" }, { role: "custom", content: envelope }] });
+  // A later call in the same turn, and a later turn, still carry it.
+  await fire("context", { messages: [{ role: "user", content: [{ type: "text", text: envelope }] }] });
+  assert.deepEqual(await reportsOf(tools), [{ event: "landed", report: "t7" }]);
+  await fire("session_shutdown");
+});
+
+test("a text-block envelope in the context also lands", async () => {
+  const { pi, fire, tools, customs } = fakePi();
+  createExtension(pi as never, { env: {}, loadConfig: reportingFake("t7") });
+  await fire("session_start", { reason: "startup" });
+  await new Promise((r) => setTimeout(r, 500));
+  const envelope = (customs[0].msg as { content: string }).content;
+  await fire("context", { messages: [{ role: "user", content: [{ type: "image" }, { type: "text", text: envelope }] }] });
+  assert.deepEqual(await reportsOf(tools), [{ event: "landed", report: "t7" }]);
+  await fire("session_shutdown");
+});
+
+test("agent_settled reports turn_ended once to a server whose event landed in that turn", async () => {
+  const { pi, fire, tools, customs } = fakePi();
+  createExtension(pi as never, { env: {}, loadConfig: reportingFake("t7") });
+  await fire("session_start", { reason: "startup" });
+  await new Promise((r) => setTimeout(r, 500));
+  const envelope = (customs[0].msg as { content: string }).content;
+  await fire("agent_start");
+  await fire("context", { messages: [{ role: "custom", content: envelope }] });
+  await fire("agent_settled");
+  await fire("agent_start");
+  await fire("agent_settled");
+  assert.deepEqual(await reportsOf(tools), [
+    { event: "landed", report: "t7" },
+    { event: "turn_ended", report: "t7" },
+  ]);
+  await fire("session_shutdown");
+});
+
+test("an event without a report key sends no report at all", async () => {
+  const { pi, fire, tools, customs } = fakePi();
+  createExtension(pi as never, { env: {}, loadConfig: reportingFake() });
+  await fire("session_start", { reason: "startup" });
+  await fire("agent_start");
+  await new Promise((r) => setTimeout(r, 500));
+  await fire("agent_settled");
+  const envelope = (customs[0].msg as { content: string }).content;
+  await fire("agent_start");
+  await fire("context", { messages: [{ role: "custom", content: envelope }] });
+  await fire("agent_settled");
+  assert.deepEqual(await reportsOf(tools), []);
+  await fire("session_shutdown");
+});
