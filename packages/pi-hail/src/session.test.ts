@@ -128,14 +128,93 @@ test("prompt during local_turn is refused with reason turn_running", () => {
   assert.equal(deps.sendUserMessage.calls.length, 0);
 });
 
+// Guards: a phone prompt arriving while pi itself is NOT idle (streaming) is
+// refused via pi's own idle check — the same turn_running path — so { accepted }
+// is not a false positive when pi is busy at the moment of injection (pi's own preflight window remains a gap). No echo tag.
+test("prompt while pi is not idle is refused turn_running, sendUserMessage never called", () => {
+  const deps = fakeDeps();
+  deps.isIdle = () => false;
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1" } });
+  assert.deepEqual(lastSend(deps), { refused: { requestId: "r1", reason: "turn_running" } });
+  assert.equal(deps.sendUserMessage.calls.length, 0);
+});
+
 // Guards (D2'): an injected phone prompt is acknowledged — { accepted:{requestId} }
-// after sendUserMessage returns.
+// after sendUserMessage returns. pi reports idle, so injection proceeds.
 test("an injected phone prompt replies { accepted:{requestId} }", () => {
   const deps = fakeDeps();
   const s = new Session(deps);
   s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r9" } });
   assert.equal(deps.sendUserMessage.calls.length, 1);
   assert.deepEqual(lastSend(deps), { accepted: { requestId: "r9" } });
+});
+
+// 0.8.0 — the daemon's opaque prompt `attempt` is echoed unchanged on the
+// { accepted } that answers THAT inject, exactly as the resend claim is echoed.
+test("an injected prompt with attempt echoes it on { accepted }", () => {
+  const deps = fakeDeps();
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1", attempt: "a1" } });
+  assert.deepEqual(lastSend(deps), { accepted: { requestId: "r1", attempt: "a1" } });
+});
+
+// 0.8.0 — the busy refusal carries the inject's attempt so the daemon can tell
+// which attempt it completes.
+test("a busy prompt with attempt echoes it on { refused turn_running }", () => {
+  const deps = fakeDeps();
+  deps.isIdle = () => false;
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1", attempt: "a1" } });
+  assert.deepEqual(lastSend(deps), {
+    refused: { requestId: "r1", reason: "turn_running", attempt: "a1" },
+  });
+});
+
+// 0.8.0 — the injection-error refusal carries the attempt too.
+test("a prompt whose injection throws echoes the attempt on { refused error }", () => {
+  const sent: unknown[] = [];
+  const deps = {
+    send: (o: unknown) => sent.push(o),
+    sendUserMessage: () => {
+      throw new Error("boom");
+    },
+    ui: { setStatus: () => {}, notify: () => {}, holdInput: () => {} },
+    getEntries: () => [],
+  };
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1", attempt: "a1" } });
+  assert.deepEqual(sent, [
+    { refused: { requestId: "r1", reason: "error", error: "boom", attempt: "a1" } },
+  ]);
+});
+
+// 0.8.0 — two prompts a1 then a2: each reply carries its OWN attempt, never the
+// other's.
+test("two prompts echo their own attempts (a1 accepted, a2 refused)", () => {
+  const deps = fakeDeps();
+  let idle = true;
+  deps.isIdle = () => idle;
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "one", from: "p1", requestId: "r1", attempt: "a1" } });
+  idle = false; // pi is now streaming the first prompt; the next one is busy
+  s.onInbound({ prompt: { text: "two", from: "p1", requestId: "r2", attempt: "a2" } });
+  const sent = deps.send.calls.map((c) => c[0]);
+  assert.deepEqual(sent[0], { accepted: { requestId: "r1", attempt: "a1" } });
+  assert.deepEqual(sent.at(-1), {
+    refused: { requestId: "r2", reason: "turn_running", attempt: "a2" },
+  });
+});
+
+// 0.8.0 — a prompt without an attempt echoes nothing extra (the daemon
+// tolerates it: the completion names the tracked attempt).
+test("a prompt without attempt echoes no attempt key", () => {
+  const deps = fakeDeps();
+  const s = new Session(deps);
+  s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1" } });
+  const reply = lastSend(deps) as { accepted: Record<string, unknown> };
+  assert.deepEqual(reply, { accepted: { requestId: "r1" } });
+  assert.equal("attempt" in reply.accepted, false);
 });
 
 // Guards (D2'): if injection throws, the prompt is refused with reason 'error'
@@ -168,8 +247,8 @@ test("onResend sends { resend:'done', error } when reading entries throws", () =
     },
   };
   const s = new Session(deps);
-  s.onResend(0, 0);
-  assert.deepEqual(sent, [{ resend: "done", error: "no entries" }]);
+  s.onResend(0, 0, "c0");
+  assert.deepEqual(sent, [{ resend: "done", error: "no entries", claim: "c0" }]);
 });
 
 // Guards: while the phone drives, local typing is held with a visible notice and replayed after — not dropped (spec §4).
@@ -406,26 +485,109 @@ test("resend replays message entries after since with cursor since+i+1 then done
     { type: "message", message: { role: "assistant" } }, // 3
   ];
   const s = new Session(r.deps);
-  s.onInbound({ resend: { since: 1 } });
+  s.onInbound({ resend: { since: 1, claim: "c1" } });
   assert.deepEqual(r.sent, [
-    { event: { type: "message_end", message: { role: "assistant" } }, replay: true, cursor: 3 },
-    { resend: "done" },
+    { event: { type: "message_end", message: { role: "assistant" } }, replay: true, cursor: 3, claim: "c1" },
+    { resend: "done", claim: "c1" },
   ]);
 });
 
-// T1.3 \u2014 onInbound reads `limit` off the resend frame and passes it through.
-test("onInbound resend passes since and limit to onResend", () => {
+// 0.8.0 — the daemon's opaque resend claim is echoed unchanged on every frame
+// replayed for that request and on the terminal done.
+test("resend echoes the claim on every replayed frame and on done", () => {
+  const r = recDeps();
+  r.entries = [
+    { type: "message", message: { role: "assistant", content: "a" } }, // 1
+    { type: "message", message: { role: "assistant", content: "b" } }, // 2
+  ];
+  const s = new Session(r.deps);
+  s.onInbound({ resend: { since: 0, claim: "c1" } });
+  assert.deepEqual(r.sent, [
+    {
+      event: { type: "message_end", message: { role: "assistant", content: "a" } },
+      replay: true,
+      cursor: 1,
+      claim: "c1",
+    },
+    {
+      event: { type: "message_end", message: { role: "assistant", content: "b" } },
+      replay: true,
+      cursor: 2,
+      claim: "c1",
+    },
+    { resend: "done", claim: "c1" },
+  ]);
+});
+
+// 0.8.0 — two resends (c1 then c2) each carry their OWN claim on their frames
+// and done; claims are never cross-contaminated.
+test("two resends echo their own claims (c1 then c2)", () => {
+  const r = recDeps();
+  r.entries = [{ type: "message", message: { role: "assistant", content: "a" } }]; // 1
+  const s = new Session(r.deps);
+  s.onInbound({ resend: { since: 0, claim: "c1" } });
+  s.onInbound({ resend: { since: 0, claim: "c2" } });
+  const frame = (claim: string) => ({
+    event: { type: "message_end", message: { role: "assistant", content: "a" } },
+    replay: true,
+    cursor: 1,
+    claim,
+  });
+  assert.deepEqual(r.sent, [
+    frame("c1"),
+    { resend: "done", claim: "c1" },
+    frame("c2"),
+    { resend: "done", claim: "c2" },
+  ]);
+});
+
+// 0.8.0 — the error path (reading entries throws) still carries the claim on done.
+test("resend error path carries the claim on done", () => {
+  const sent: unknown[] = [];
+  const deps = {
+    send: (o: unknown) => sent.push(o),
+    sendUserMessage: () => {},
+    ui: { setStatus: () => {}, notify: () => {}, holdInput: () => {} },
+    getEntries: () => {
+      throw new Error("no entries");
+    },
+  };
+  const s = new Session(deps);
+  s.onResend(0, 0, "c9");
+  assert.deepEqual(sent, [{ resend: "done", error: "no entries", claim: "c9" }]);
+});
+
+// 0.8.0 — a resend without a claim is a protocol error: log a diag and still
+// answer done (without a claim) so the daemon never waits forever. The daemon
+// requires 0.8.0, so this never happens in the release.
+test("resend without a claim logs a diag and answers done without a claim", () => {
+  const r = recDeps();
+  r.entries = [{ type: "message", message: { role: "assistant", content: "a" } }];
+  const s = new Session(r.deps);
+  s.onInbound({ resend: { since: 0 } });
+  const diags = r.sent.filter((f) => (f as Record<string, unknown>).diag);
+  assert.equal(diags.length, 1, "one diag for the missing claim");
+  assert.deepEqual(r.sent.at(-1), { resend: "done" });
+  assert.equal(
+    r.sent.some((f) => (f as Record<string, unknown>).event),
+    false,
+    "no frames are replayed on a protocol error",
+  );
+});
+
+// T1.3 \u2014 onInbound reads `limit`/`claim` off the resend frame and passes them through.
+test("onInbound resend passes since, limit and claim to onResend", () => {
   const r = recDeps();
   const s = new Session(r.deps);
-  const calls: Array<[number, number | undefined]> = [];
-  s.onResend = (since: number, limit?: number) => {
-    calls.push([since, limit]);
+  const calls: Array<[number, number | undefined, string | undefined]> = [];
+  s.onResend = (since: number, limit?: number, claim?: string) => {
+    calls.push([since, limit, claim]);
   };
-  s.onInbound({ resend: { since: 5, limit: 2 } });
+  s.onInbound({ resend: { since: 5, limit: 2, claim: "c1" } });
   s.onInbound({ resend: { since: 5 } });
   assert.deepEqual(calls, [
-    [5, 2],
-    [5, 0],
+    [5, 2, "c1"],
+    [5, 0, undefined],
   ]);
 });
 
@@ -439,12 +601,12 @@ test("onResend with limit 0 replays every frame after since with no marker", () 
     { type: "message", message: { role: "assistant" } }, // 3
   ];
   const s = new Session(r.deps);
-  s.onResend(0, 0);
+  s.onResend(0, 0, "c1");
   assert.deepEqual(r.sent, [
-    { event: { type: "message_end", message: { role: "assistant" } }, replay: true, cursor: 1 },
-    { event: { type: "message_end", message: { role: "assistant" } }, replay: true, cursor: 2 },
-    { event: { type: "message_end", message: { role: "assistant" } }, replay: true, cursor: 3 },
-    { resend: "done" },
+    { event: { type: "message_end", message: { role: "assistant" } }, replay: true, cursor: 1, claim: "c1" },
+    { event: { type: "message_end", message: { role: "assistant" } }, replay: true, cursor: 2, claim: "c1" },
+    { event: { type: "message_end", message: { role: "assistant" } }, replay: true, cursor: 3, claim: "c1" },
+    { resend: "done", claim: "c1" },
   ]);
 });
 
@@ -460,12 +622,12 @@ test("onResend caps to the last `limit` frames and prepends a trimmed marker", (
     { type: "message", message: { role: "assistant", content: "d" } }, // 4
   ];
   const s = new Session(r.deps);
-  s.onResend(0, 2);
+  s.onResend(0, 2, "c1");
   assert.deepEqual(r.sent, [
-    { event: { type: "hail_history_trimmed", skipped: 2 }, replay: true, cursor: 2 },
-    { event: { type: "message_end", message: { role: "assistant", content: "c" } }, replay: true, cursor: 3 },
-    { event: { type: "message_end", message: { role: "assistant", content: "d" } }, replay: true, cursor: 4 },
-    { resend: "done" },
+    { event: { type: "hail_history_trimmed", skipped: 2 }, replay: true, cursor: 2, claim: "c1" },
+    { event: { type: "message_end", message: { role: "assistant", content: "c" } }, replay: true, cursor: 3, claim: "c1" },
+    { event: { type: "message_end", message: { role: "assistant", content: "d" } }, replay: true, cursor: 4, claim: "c1" },
+    { resend: "done", claim: "c1" },
   ]);
 });
 
@@ -477,11 +639,11 @@ test("onResend with frames <= limit sends no marker", () => {
     { type: "message", message: { role: "assistant", content: "b" } }, // 2
   ];
   const s = new Session(r.deps);
-  s.onResend(0, 2);
+  s.onResend(0, 2, "c1");
   assert.deepEqual(r.sent, [
-    { event: { type: "message_end", message: { role: "assistant", content: "a" } }, replay: true, cursor: 1 },
-    { event: { type: "message_end", message: { role: "assistant", content: "b" } }, replay: true, cursor: 2 },
-    { resend: "done" },
+    { event: { type: "message_end", message: { role: "assistant", content: "a" } }, replay: true, cursor: 1, claim: "c1" },
+    { event: { type: "message_end", message: { role: "assistant", content: "b" } }, replay: true, cursor: 2, claim: "c1" },
+    { resend: "done", claim: "c1" },
   ]);
 });
 
@@ -534,14 +696,15 @@ test("round trip: live cursors 1,2,3 then resend from 2 replays exactly the 3rd"
   assert.deepEqual(liveCursors, [1, 2, 3]);
 
   r.sent.length = 0;
-  s.onInbound({ resend: { since: 2 } });
+  s.onInbound({ resend: { since: 2, claim: "c1" } });
   assert.deepEqual(r.sent, [
     {
       event: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "m2" }] } },
       replay: true,
       cursor: 3,
+      claim: "c1",
     },
-    { resend: "done" },
+    { resend: "done", claim: "c1" },
   ]);
 });
 
@@ -570,10 +733,10 @@ test("round trip: a bash entry between live messages \u2014 live and replay curs
 
   // Resend from the 1st message's cursor replays EXACTLY m2 at the same cursor 3.
   r.sent.length = 0;
-  s.onInbound({ resend: { since: 1 } });
+  s.onInbound({ resend: { since: 1, claim: "c1" } });
   assert.deepEqual(r.sent, [
-    { event: { type: "message_end", message: m2 }, replay: true, cursor: 3 },
-    { resend: "done" },
+    { event: { type: "message_end", message: m2 }, replay: true, cursor: 3, claim: "c1" },
+    { resend: "done", claim: "c1" },
   ]);
 });
 
@@ -812,3 +975,33 @@ test("a boundary frame is written even under backpressure, after flushing pendin
   assert.equal(first.event?.type, "message_update");
   assert.deepEqual(sent[1], { turn: "start" });
 });
+
+for (const deliverAs of ["steer", "followUp"] as const) {
+  for (const busyVia of ["local_turn", "isIdle"] as const) {
+    test(`busy via ${busyVia}: ${deliverAs} is accepted with attempt without owning next turn`, () => {
+      const deps = fakeDeps();
+      const s = new Session(deps);
+      if (busyVia === "local_turn") s.turnStart();
+      else deps.isIdle = () => false;
+      s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1", attempt: "a1", deliverAs } });
+      assert.deepEqual(deps.sendUserMessage.calls, [["hi", { deliverAs }]]);
+      assert.deepEqual(lastSend(deps), { accepted: { requestId: "r1", attempt: "a1" } });
+      assert.equal(s.submitLocalInput("local"), true);
+      s.turnEnd();
+      s.turnStart();
+      assert.equal(s.submitLocalInput("next local"), true);
+      assert.equal(deps.send.calls.some(([frame]) => (frame as { lock?: string }).lock === "held"), false);
+    });
+  }
+
+  test(`idle: ${deliverAs} injects normally and owns the next turn`, () => {
+    const deps = fakeDeps();
+    const s = new Session(deps);
+    s.onInbound({ prompt: { text: "hi", from: "p1", requestId: "r1", attempt: "a1", deliverAs } });
+    assert.deepEqual(deps.sendUserMessage.calls, [["hi"]]);
+    assert.deepEqual(lastSend(deps), { accepted: { requestId: "r1", attempt: "a1" } });
+    s.turnStart();
+    assert.equal(s.submitLocalInput("local"), false);
+    assert.equal(deps.send.calls.some(([frame]) => (frame as { lock?: string }).lock === "held"), true);
+  });
+}

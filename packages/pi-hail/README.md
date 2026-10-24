@@ -87,8 +87,28 @@ Daemon replies with `{ "ok": true, "data": { "hostId", "daemonVersion", "accepte
 
 **Then, one object per line, both directions:**
 
-- **extension → daemon:** `{ "event": <pi rpc event verbatim> }` · `{ "turn": "start" | "end" }` · `{ "lock": "held" | "released" }` · `{ "exit": { "code": n } }` · `{ "refused": { "requestId", "reason": "turn_running" } }` · `{ "ask": { "requestId", "title", "message", "toolName"?, "surface"?, "value"? } }` · `{ "askDone": { "requestId", "outcome": "allowed" | "denied", "by": "mac" | "phone" } }`
-- **daemon → extension:** `{ "prompt": { "text", "from", "requestId" } }` · `{ "presence": { "phones": [ ... ] } }` · `{ "answer": { "requestId", "value": "allow" | "deny" } }` · `{ "ctl": "stop" }`
+- **extension → daemon:** `{ "event": <pi rpc event verbatim> }` · `{ "turn": "start" | "end" }` · `{ "lock": "held" | "released" }` · `{ "exit": { "code": n } }` · `{ "accepted": { "requestId", "attempt"? } }` · `{ "refused": { "requestId", "reason": "turn_running" | "error", "error"?, "attempt"? } }` · `{ "ask": { "requestId", "title", "message", "toolName"?, "surface"?, "value"? } }` · `{ "askDone": { "requestId", "outcome": "allowed" | "denied", "by": "mac" | "phone" } }` · (catch-up) `{ "event": <...>, "replay": true, "cursor": n, "claim": "..." }` · `{ "resend": "done", "claim": "..." }` (with `"error"` on failure)
+- **daemon → extension:** `{ "prompt": { "text", "from", "requestId", "attempt"? } }` · `{ "presence": { "phones": [ ... ] } }` · `{ "answer": { "requestId", "value": "allow" | "deny" } }` · `{ "ctl": "stop" }` · `{ "resend": { "since": n, "limit"?: n, "claim": "..." } }`
+
+Catch-up is driven by the daemon: a `{ resend: { since, limit, claim } }` asks
+the extension to replay completed message entries after `since` (capped to the
+last `limit`, uncapped when `0`/absent). Each replayed frame carries its
+absolute `cursor` and `replay: true`, and the run ends with a `{ resend: "done" }`.
+The `claim` is an **opaque** token (decided 2026-10-13): pi-hail echoes it
+unchanged on every frame it replays for that request and on the terminal done
+(the daemon reads the claim and forwards only `event`). A `resend` without a
+claim is a protocol error — the extension logs a `{ diag }` and still answers
+`{ resend: "done" }` without a claim; the daemon requires 0.8.0, so this never
+happens in the release.
+
+A phone prompt is answered exactly once: `{ accepted }` once pi-hail handed the
+text to pi (optimistic: pi's own preflight may still drop it, unobserved, see the
+CHANGELOG), or `{ refused }` with `turn_running` (a turn is running, or pi is not
+idle) or `error` (injection threw). The prompt's `attempt` is an **opaque**
+token, like the resend claim: pi-hail echoes it unchanged on whichever reply
+answers that inject, so the daemon can tell a late reply for a superseded
+attempt from the current one. A prompt without an `attempt` is answered with no
+`attempt` key (the daemon tolerates it).
 
 An `ask`/`askDone` pair brackets a permission approval: `ask` mirrors the
 permission system's own showing prompt to the phone (rendered as a confirm

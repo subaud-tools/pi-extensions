@@ -28,7 +28,7 @@ function recorder<A extends unknown[]>(): Recorder<A> {
 /** Reusable fake dependency set. Later tasks extend this. */
 export function fakeDeps() {
   const send = recorder<[unknown]>();
-  const sendUserMessage = recorder<[string]>();
+  const sendUserMessage = recorder<[string, { deliverAs: "steer" | "followUp" }?]>();
   const setStatus = recorder<[string | undefined]>();
   const notify = recorder<[string, ("info" | "warning" | "error")?]>();
   const holdInput = recorder<[boolean]>();
@@ -44,12 +44,15 @@ export function fakeDeps() {
     };
     answerPrompt: typeof answerPrompt;
     getEntries: typeof getEntries;
+    isIdle: () => boolean;
   } = {
     send,
     sendUserMessage,
     ui: { setStatus, notify, holdInput },
     answerPrompt,
     getEntries,
+    // pi's own idle check (default idle so prompts inject); tests flip to false.
+    isIdle: () => true,
   };
   return deps;
 }

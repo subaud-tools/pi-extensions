@@ -248,6 +248,9 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
       const c = ctx as {
         cwd: string;
         sessionManager: { getSessionId: () => unknown; getEntries?: () => unknown[] };
+        // pi's own idle check lives on the ExtensionContext (dist/core/extensions
+        // /types.d.ts: isIdle(): boolean), NOT on the ExtensionAPI (`pi`).
+        isIdle: () => boolean;
         ui: {
           setStatus: (key: string, text: string | undefined) => void;
           notify: (msg: string, level: "info" | "warning" | "error") => void;
@@ -295,7 +298,14 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
         // mark, and retries when the socket drains. Boundary frames ignore this.
         canSendProgress: () => socket?.canSendProgress() ?? false,
         onDrain: (cb) => socket?.onDrain(cb),
-        sendUserMessage: (text) => pi.sendUserMessage(text),
+        sendUserMessage: (text, options) => pi.sendUserMessage(text, options),
+        // pi's own idle check (muster): sendUserMessage swallows its busy
+        // rejection, so a prompt injected mid-stream would falsely reply
+        // { accepted }. The Session consults this before injecting and refuses
+        // plain prompts with turn_running when pi is not idle. Explicit delivery
+        // options use pi’s native queue instead. isIdle() is a method of the
+        // ExtensionContext (`c`), not the ExtensionAPI (`pi`).
+        isIdle: () => c.isIdle(),
         ui: {
           setStatus: (text) => c.ui.setStatus("pi-hail", text),
           notify: (msg, level) => c.ui.notify(msg, level ?? "info"),
