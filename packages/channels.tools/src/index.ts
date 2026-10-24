@@ -75,8 +75,38 @@ export function createExtension(pi: any, deps: Deps = {}): void {
     announce("channels:pending", { count: wake.pendingCount() });
   }
 
+  // The lifecycle reports (notifications/channels/report). A server marks an event
+  // with the meta key `report`, an opaque token; we tell that server when the
+  // event is held, when its envelope lands in a turn, and when that turn
+  // ends. An event without the key is never reported.
+  //
+  // `delivered` holds each envelope handed to pi with the tokens in it, until
+  // a `context` event shows the envelope in a turn: the same signal
+  // pi-casebook reads for its shown deliveries. Removing it there is what
+  // makes landed fire once per token. `landedThisTurn` maps each server whose
+  // event landed to the token that landed last, for its turn_ended report.
+  let delivered: Array<{ envelope: string; source: string; tokens: string[] }> = [];
+  let landedThisTurn = new Map<string, string>();
+  const tokenOf = (event: { meta: Record<string, string> }): string => event.meta.report ?? "";
+
+  function noteLanded(text: string): void {
+    if (delivered.length === 0 || !text.includes("<channel ")) return;
+    delivered = delivered.filter((d) => {
+      if (!text.includes(d.envelope)) return true;
+      for (const report of d.tokens) {
+        manager.report(d.source, { event: "landed", report });
+        landedThisTurn.set(d.source, report);
+      }
+      return false;
+    });
+  }
+
   const wake = createWake({
-    deliver: ({ envelope, summary }) => {
+    onHeld: (event) => {
+      const report = tokenOf(event);
+      if (report !== "") manager.report(event.source, { event: "held", report });
+    },
+    deliver: ({ envelope, summary, source, events }) => {
       if (oneShot) {
         log(`one-shot run: not delivering a channel event as a turn (${summary})`);
         return;
@@ -103,6 +133,8 @@ export function createExtension(pi: any, deps: Deps = {}): void {
         { deliverAs: "nextTurn" },
       );
       pi.sendUserMessage(summary, { deliverAs: "steer" });
+      const tokens = events.map(tokenOf).filter((t) => t !== "");
+      if (tokens.length > 0) delivered.push({ envelope, source, tokens });
       announce("channels:delivered", {});
     },
     log: (message) => log(message),
@@ -235,6 +267,8 @@ export function createExtension(pi: any, deps: Deps = {}): void {
     ui = ctx.ui;
     oneShot = ctx.mode === "print" || ctx.mode === "json";
     wake.onSessionStart();
+    delivered = [];
+    landedThisTurn = new Map();
 
     // The whole body runs under try/finally so wake.onReady() always fires,
     // even if something in between throws (most plausibly pi.registerTool
@@ -283,8 +317,31 @@ export function createExtension(pi: any, deps: Deps = {}): void {
     return { systemPrompt: `${event.systemPrompt ?? ""}\n\n${blocks.join("\n\n")}` };
   });
 
+  pi.on("context", (event: { messages?: unknown[] }) => {
+    if (delivered.length === 0) return undefined;
+    for (const msg of event.messages ?? []) {
+      try {
+        const content = (msg as { content?: unknown }).content;
+        if (typeof content === "string") noteLanded(content);
+        else if (Array.isArray(content)) {
+          for (const block of content) {
+            const b = block as { type?: unknown; text?: unknown } | null;
+            if (b?.type === "text" && typeof b.text === "string") noteLanded(b.text);
+          }
+        }
+      } catch (error) {
+        log(`reading the context for landed channel events failed: ${String(error)}`);
+      }
+    }
+    return undefined;
+  });
+
   pi.on("agent_start", () => wake.onAgentStart());
   pi.on("agent_settled", () => {
+    // Before the settle flushes held events: those land in the next turn.
+    const ended = landedThisTurn;
+    landedThisTurn = new Map();
+    for (const [source, report] of ended) manager.report(source, { event: "turn_ended", report });
     wake.onAgentSettled();
     announcePending();
   });

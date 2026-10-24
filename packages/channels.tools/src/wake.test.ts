@@ -119,3 +119,37 @@ test("delivery order across sources follows first arrival", () => {
   wake.onAgentSettled();
   assert.match(delivered[0], /source="galley"/);
 });
+
+test("an event buffered because a turn is running is reported held", () => {
+  const held: ChannelEvent[] = [];
+  const wake = createWake({ deliver: () => {}, onHeld: (e) => held.push(e) });
+  wake.onSessionStart();
+  wake.onReady();
+  wake.onAgentStart();
+  wake.onEvent(ev("diazo", "revise", { report: "t7" }));
+  assert.deepEqual(held.map((e) => e.meta.report), ["t7"]);
+});
+
+test("an event delivered at once, or buffered before ready, is not reported held", () => {
+  const held: ChannelEvent[] = [];
+  const wake = createWake({ deliver: () => {}, onHeld: (e) => held.push(e) });
+  wake.onSessionStart();
+  wake.onEvent(ev("diazo", "early", { report: "t1" }));
+  wake.onReady();
+  wake.onEvent(ev("diazo", "idle", { report: "t2" }));
+  assert.equal(held.length, 0);
+});
+
+test("a delivery names its source and carries the events it batches", () => {
+  const deliveries: Array<{ source: string; events: ChannelEvent[] }> = [];
+  const wake = createWake({ deliver: (d) => deliveries.push(d) });
+  wake.onSessionStart();
+  wake.onReady();
+  wake.onAgentStart();
+  wake.onEvent(ev("diazo", "one", { report: "t1" }));
+  wake.onEvent(ev("diazo", "two", { report: "t2" }));
+  wake.onAgentSettled();
+  assert.equal(deliveries.length, 1);
+  assert.equal(deliveries[0].source, "diazo");
+  assert.deepEqual(deliveries[0].events.map((e) => e.meta.report), ["t1", "t2"]);
+});

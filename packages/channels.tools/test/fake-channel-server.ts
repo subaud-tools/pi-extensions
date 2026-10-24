@@ -15,6 +15,9 @@
 //   FAKE_ECHO_IDENTITY=1  → tools/call answers "identity:<AGENT_SESSION_ID>"
 //                            ("identity:unset" when absent), so a test can see
 //                            which session id the server was spawned with
+//   FAKE_PUSH_REPORT=tok  → the pushed notification carries meta.report=tok
+//   FAKE_RECORD_REPORTS=1 → tools/call answers "reports:<json>", the params of
+//                            every notifications/channels/report received
 if (process.env.FAKE_IGNORE_SIGTERM) {
   process.on("SIGTERM", () => {});
   process.stderr.write(`PID:${process.pid}\n`);
@@ -36,7 +39,13 @@ function send(msg: unknown): void {
   process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
+const reports: unknown[] = [];
+
 function handle(msg: Record<string, unknown>): void {
+  if (msg.method === "notifications/channels/report") {
+    reports.push(msg.params);
+    return;
+  }
   if (msg.method === "initialize") {
     const capabilities = process.env.FAKE_NO_CAPABILITY
       ? { tools: {} }
@@ -79,9 +88,11 @@ function handle(msg: Record<string, unknown>): void {
       });
       return;
     }
-    const text = process.env.FAKE_ECHO_IDENTITY
-      ? `identity:${process.env.AGENT_SESSION_ID ?? "unset"}`
-      : "fake ok";
+    const text = process.env.FAKE_RECORD_REPORTS
+      ? `reports:${JSON.stringify(reports)}`
+      : process.env.FAKE_ECHO_IDENTITY
+        ? `identity:${process.env.AGENT_SESSION_ID ?? "unset"}`
+        : "fake ok";
     send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } });
     return;
   }
@@ -96,7 +107,11 @@ if (pushAfter > 0) {
     send({
       jsonrpc: "2.0",
       method: "notifications/claude/channel",
-      params: { content: "fake: something happened\n\n---\nFAKE GUIDANCE", meta: { intent: "fyi", count: "1" } },
+      params: { content: "fake: something happened\n\n---\nFAKE GUIDANCE", meta: {
+        intent: "fyi",
+        count: "1",
+        ...(process.env.FAKE_PUSH_REPORT ? { report: process.env.FAKE_PUSH_REPORT } : {}),
+      } },
     });
   }, pushAfter);
 }

@@ -7,6 +7,13 @@ import { spawnEnv } from "./identity.ts";
 
 export const CHANNEL_CAPABILITY = "claude/channel";
 export const CHANNEL_NOTIFICATION = "notifications/claude/channel";
+// Sent back to a channel server about an event it marked with a `report` meta
+// key: held (buffered mid-turn), landed (its envelope is in a turn's
+// context), turn_ended (the turn it landed in settled). A notification needs
+// no answer, so a server that does not know it is unaffected.
+export const REPORT_NOTIFICATION = "notifications/channels/report";
+
+export type Report = { event: "held" | "landed" | "turn_ended"; report: string };
 
 const PROTOCOL_VERSION = "2025-06-18";
 const RETRY_BASE_MS = 30_000;
@@ -372,6 +379,21 @@ export class ConnectionManager {
     if (typeof timer.unref === "function") timer.unref();
     state.timer = timer;
     this.retries.set(name, state);
+  }
+
+  // Not retried: a report to a server that is gone or fails is logged, and
+  // the server's page keeps the state it last heard.
+  report(server: string, report: Report): void {
+    const entry = this.live.get(server);
+    if (!entry) {
+      this.opts.log(`channel ${server}: not connected, ${report.event} report dropped`);
+      return;
+    }
+    try {
+      entry.conn.client.notify(REPORT_NOTIFICATION, report);
+    } catch (error) {
+      this.opts.log(`channel ${server}: sending a ${report.event} report failed: ${String(error)}`);
+    }
   }
 
   private publishStatus(): void {
