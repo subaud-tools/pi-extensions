@@ -47,3 +47,13 @@ test("the abort frame parses from its wire line, and only it does", () => {
     assert.equal(isAbortFrame(decodeLine(line)), false, line);
   }
 });
+
+// Guards: the phone's one image rides the daemon's prompt line as {data, mimeType}.
+test("a prompt line carries an optional image", () => {
+  const frame: Inbound = {
+    prompt: { text: "", from: "p1", requestId: "r1", image: { data: "/9j/4AAQ", mimeType: "image/jpeg" } },
+  };
+  const line = '{"prompt":{"text":"","from":"p1","requestId":"r1","image":{"data":"/9j/4AAQ","mimeType":"image/jpeg"}}}';
+  assert.equal(encodeLine(frame), line + "\n");
+  assert.deepEqual(decodeLine(line), frame);
+});

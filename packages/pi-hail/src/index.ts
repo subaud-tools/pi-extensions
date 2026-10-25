@@ -300,7 +300,7 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
         // mark, and retries when the socket drains. Boundary frames ignore this.
         canSendProgress: () => socket?.canSendProgress() ?? false,
         onDrain: (cb) => socket?.onDrain(cb),
-        sendUserMessage: (text, options) => pi.sendUserMessage(text, options),
+        sendUserMessage: (content, options) => pi.sendUserMessage(content, options),
         // pi's own idle check (muster): sendUserMessage swallows its busy
         // rejection, so a prompt injected mid-stream would falsely reply
         // { accepted }. The Session consults this before injecting and refuses

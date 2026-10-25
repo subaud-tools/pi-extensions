@@ -3,7 +3,7 @@
 // It lives under src/ so `files: ["src", ...]` still ships it, and the package
 // test glob (`src/*.test.ts`) does not match `test-helpers.ts`.
 
-import type { SessionDeps } from "./session.ts";
+import type { SessionDeps, UserContent } from "./session.ts";
 
 interface Recorder<A extends unknown[]> {
   (...args: A): void;
@@ -28,7 +28,7 @@ function recorder<A extends unknown[]>(): Recorder<A> {
 /** Reusable fake dependency set. Later tasks extend this. */
 export function fakeDeps() {
   const send = recorder<[unknown]>();
-  const sendUserMessage = recorder<[string, { deliverAs: "steer" | "followUp" }?]>();
+  const sendUserMessage = recorder<[UserContent, { deliverAs: "steer" | "followUp" }?]>();
   const setStatus = recorder<[string | undefined]>();
   const notify = recorder<[string, ("info" | "warning" | "error")?]>();
   const holdInput = recorder<[boolean]>();
