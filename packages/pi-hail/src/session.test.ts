@@ -176,6 +176,7 @@ test("a prompt whose injection throws echoes the attempt on { refused error }", 
   const sent: unknown[] = [];
   const deps = {
     send: (o: unknown) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {
       throw new Error("boom");
     },
@@ -223,6 +224,7 @@ test("a phone prompt whose sendUserMessage throws replies { refused reason:'erro
   const sent: unknown[] = [];
   const deps = {
     send: (o: unknown) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {
       throw new Error("turn busy");
     },
@@ -240,6 +242,7 @@ test("onResend sends { resend:'done', error } when reading entries throws", () =
   const sent: unknown[] = [];
   const deps = {
     send: (o: unknown) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {},
     ui: { setStatus: () => {}, notify: () => {}, holdInput: () => {} },
     getEntries: () => {
@@ -426,6 +429,7 @@ function recDeps() {
   };
   r.deps = {
     send: (o) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {},
     ui: {
       setStatus: (t) => statuses.push(t),
@@ -546,6 +550,7 @@ test("resend error path carries the claim on done", () => {
   const sent: unknown[] = [];
   const deps = {
     send: (o: unknown) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {},
     ui: { setStatus: () => {}, notify: () => {}, holdInput: () => {} },
     getEntries: () => {

@@ -7,6 +7,7 @@ function sessionWithSends() {
   const sent: unknown[] = [];
   const deps: SessionDeps = {
     send: (o) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {},
     ui: {
       setStatus: () => {},

@@ -98,9 +98,9 @@ export interface SessionDeps {
   isIdle?: () => boolean;
   /**
    * pi's ctx.abort(): stop the running turn (the phone's Stop). Called only
-   * while a turn runs. Absent (older wiring) means a phone Stop is inert.
+   * while a turn runs.
    */
-  abort?: () => void;
+  abort: () => void;
   ui: {
     setStatus: (text: string | undefined) => void;
     notify: (msg: string, level?: "info" | "warning" | "error") => void;
@@ -577,7 +577,7 @@ export class Session {
       // The phone's Stop: stop pi's running turn, whoever started it. With no
       // turn running there is nothing to stop.
       const busy = this.phase !== "idle" || this.deps.isIdle?.() === false;
-      if (busy) this.deps.abort?.();
+      if (busy) this.deps.abort();
       return;
     }
     if ("ctl" in m) {
