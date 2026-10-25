@@ -7,7 +7,7 @@
 
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import type { PermissionsService, PromptAnswerer } from "@gotgenes/pi-permission-system";
@@ -29,37 +29,47 @@ export interface ExtensionDeps {
   getPermissionsService?: (sessionId: string) => PermissionsService | undefined;
   getTmuxSessionId?: () => string | undefined;
   /** Test seam: tmux facts for this pane (defaults to one `tmux display-message`). */
-  getTmuxFacts?: () => TmuxFacts;
+  getTmuxFacts?: () => TmuxFacts | Promise<TmuxFacts>;
+  /** Test seam: run tmux with argv and resolve its stdout (defaults to an async execFile). */
+  runTmux?: (argv: string[], timeoutMs: number) => Promise<string>;
   /** Test seam: clock for the diag rate-limiter (defaults to Date.now). */
   now?: () => number;
 }
 
 
 // One `tmux display-message` for every fact, targeted at this pane when tmux
-// exported TMUX_PANE. A bare terminal (no $TMUX) reports inTmux:false. Guarded
-// so a test (or a machine without tmux) never throws or hangs.
+// exported TMUX_PANE. A bare terminal (no $TMUX) reports inTmux:false. Inside
+// tmux a failed read REJECTS rather than looking like a pane with no session
+// name: registering under the fallback identity would leave the pane unadopted
+// (seen 2026-10-25, a reload storm on a 115-pane server), so the caller retries.
+// The read is async so a busy tmux server never blocks pi's event loop, and its
+// timeout is generous for the same reason; a slower server is covered by retry.
 const FACTS_FORMAT = "#{@hail_session}\t#{session_name}\t#{window_name}\t#{socket_path}\t#{pane_id}";
+const TMUX_FACTS_TIMEOUT_MS = 5000;
 
-function readTmuxFacts(): TmuxFacts {
+const realRunTmux = (argv: string[], timeoutMs: number): Promise<string> =>
+  new Promise((resolve, reject) => {
+    execFile("tmux", argv, { encoding: "utf8", timeout: timeoutMs }, (err, stdout) =>
+      err ? reject(err) : resolve(stdout),
+    );
+  });
+
+async function readTmuxFacts(runTmux: typeof realRunTmux): Promise<TmuxFacts> {
   if (!process.env.TMUX) return { inTmux: false };
   const argv = ["display-message", "-p"];
   if (process.env.TMUX_PANE) argv.push("-t", process.env.TMUX_PANE);
   argv.push(FACTS_FORMAT);
-  try {
-    const out = execFileSync("tmux", argv, { encoding: "utf8", timeout: 1000 }).replace(/\n$/, "");
-    const [hail, session, window, socket, pane] = out.split("\t");
-    const opt = (v: string | undefined) => (v && v.length > 0 ? v : undefined);
-    return {
-      inTmux: true,
-      hailSession: opt(hail),
-      sessionName: opt(session),
-      windowName: opt(window),
-      socketPath: opt(socket),
-      paneId: opt(pane),
-    };
-  } catch {
-    return { inTmux: true };
-  }
+  const out = (await runTmux(argv, TMUX_FACTS_TIMEOUT_MS)).replace(/\n$/, "");
+  const [hail, session, window, socket, pane] = out.split("\t");
+  const opt = (v: string | undefined) => (v && v.length > 0 ? v : undefined);
+  return {
+    inTmux: true,
+    hailSession: opt(hail),
+    sessionName: opt(session),
+    windowName: opt(window),
+    socketPath: opt(socket),
+    paneId: opt(pane),
+  };
 }
 
 // Resolve the loaded pi build's version for the C6 handshake. The package.json
@@ -140,6 +150,7 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
   const connect = deps.connect ?? realConnect;
   const socketPath = deps.socketPath;
   const now = deps.now ?? (() => Date.now());
+  const runTmux = deps.runTmux ?? realRunTmux;
 
   // Diagnostics (spec D3'): report a swallowed error to the daemon as a { diag }
   // frame, rate-limited to 1/s per instance and de-duplicated per message for
@@ -201,7 +212,13 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
   let disposed = false;
   let session: Session | undefined;
   let socket: DaemonSocket | undefined;
-  let registerInput: RegisterInput | undefined;
+  // What register needs besides the pane's identity, bound in session_start.
+  // The identity itself is worked out at EACH register from fresh tmux facts.
+  let registerBase: Omit<RegisterInput, "sessionId" | "project" | "work"> | undefined;
+  // The first failed tmux facts read, reported once as a { diag } after the
+  // next successful register (a diag sent while disconnected goes nowhere).
+  let factsFailure: string | undefined;
+  let factsFailureReported = false;
   // The input handler reads this flag; the Session sets it via ui.holdInput
   // while a phone turn runs, so local terminal input is held (not dropped).
   let heldFlag = false;
@@ -224,21 +241,58 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
   // Register (and, on a reconnect, replay). Both the first call and every
   // reconnect must swallow a rejected promise: a dead daemon rejects, and pi
   // must still start / keep running with no unhandled rejection.
-  const register = (): void => {
-    if (disposed || !socket || !session || !registerInput) return;
+  const register = async (): Promise<void> => {
+    if (disposed || !socket || !session || !registerBase) return;
+    // The identity is worked out at EACH register, so a reconnect corrects one
+    // a busy tmux server got wrong. Inside tmux a failed read never falls back:
+    // try again on the socket's reconnect backoff.
+    let facts: TmuxFacts;
+    try {
+      facts = deps.getTmuxFacts ? await deps.getTmuxFacts() : await readTmuxFacts(runTmux);
+    } catch (err) {
+      factsFailure ??= errorMessage(err);
+      if (!disposed) socket.reconnect();
+      return;
+    }
+    if (disposed || !socket || !session || !registerBase) return;
+    // Back-compat test seam: an injected @hail_session id overrides the facts.
+    if (deps.getTmuxSessionId) facts.hailSession = deps.getTmuxSessionId();
+    const id = deriveIdentity(facts, registerBase.piSessionId ?? "", registerBase.dir);
+    const input: RegisterInput = {
+      ...registerBase,
+      sessionId: id.sessionId,
+      project: id.project,
+      work: id.work,
+      identity: id.identity,
+      ...(facts.inTmux
+        ? { tmux: { socket: facts.socketPath, session: facts.sessionName, pane: facts.paneId } }
+        : {}),
+    };
     // The cursor is recomputed at EACH register (spec A3): a reconnect after a
     // daemon outage must report where the pane IS now, not where it started.
     if (computeCursor) {
       try {
-        registerInput.cursor = computeCursor();
+        input.cursor = computeCursor();
       } catch (err) {
         reportDiag("register.cursor", errorMessage(err));
       }
     }
     socket
-      .register(session.buildRegisterArgs(registerInput))
-      .then((reply) => safe(() => session?.onRegisterReply(reply)))
+      .register(session.buildRegisterArgs(input))
+      .then((reply) =>
+        safe(() => {
+          session?.onRegisterReply(reply);
+          if (factsFailure !== undefined && !factsFailureReported) {
+            factsFailureReported = true;
+            reportDiag("register.tmuxFacts", factsFailure);
+          }
+        }),
+      )
       .catch(() => {});
+  };
+
+  const registerSafely = (): void => {
+    register().catch((err) => reportDiag("register", errorMessage(err)));
   };
 
   pi.on("session_start", (_event: unknown, ctx: unknown) =>
@@ -273,24 +327,12 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
       // The pi session id (spec A4), always reported. Distinct from the slot
       // identity below, which for a hail-identity pane is the @hail_session id.
       const piSessionId = String(c.sessionManager.getSessionId());
-      const facts = deps.getTmuxFacts ? deps.getTmuxFacts() : readTmuxFacts();
-      // Back-compat test seam: an injected @hail_session id overrides the facts.
-      if (deps.getTmuxSessionId) facts.hailSession = deps.getTmuxSessionId();
-      const dir = c.cwd;
-      const id = deriveIdentity(facts, String(c.sessionManager.getSessionId()), dir);
       const piVersion = resolvePiVersion();
-      registerInput = {
-        sessionId: id.sessionId,
-        project: id.project,
-        work: id.work,
-        dir,
+      registerBase = {
+        dir: c.cwd,
         piVersion,
         piSessionId,
         instanceId,
-        identity: id.identity,
-        ...(facts.inTmux
-          ? { tmux: { socket: facts.socketPath, session: facts.sessionName, pane: facts.paneId } }
-          : {}),
         // Report the pane's current in-memory entry count so the daemon seeds a
         // brand-new slot's cursor to it and never replays pre-existing history
         // (streaming spec \u00a74.1).
@@ -356,11 +398,11 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
         onDown: () => safe(() => session?.onTransportDown()),
         // The session knows the register args + replay cursor; re-register on
         // reconnect (which triggers replay after the daemon's `have` cursor).
-        onReconnect: () => register(),
+        onReconnect: () => registerSafely(),
         // Report the socket's swallowed errors through the same rate-limited path.
         onDiag: (where, message) => reportDiag(where, message),
       });
-      register();
+      registerSafely();
     }),
   );
 

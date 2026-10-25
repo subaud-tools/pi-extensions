@@ -237,6 +237,106 @@ test("daemon pane registers with its @hail_session task id", async () => {
   assert.equal(reg.args.sessionId, taskId);
 });
 
+// ── Pane identity under a busy tmux server (2026-10-25 reload storm) ────────
+
+/** Run `fn` with $TMUX set as inside a pane, restoring the bare-terminal env after. */
+async function inTmux(fn: () => Promise<void>): Promise<void> {
+  process.env.TMUX = "/private/tmp/tmux-501/proj,1,0";
+  process.env.TMUX_PANE = "%5";
+  try {
+    await fn();
+  } finally {
+    delete process.env.TMUX;
+    delete process.env.TMUX_PANE;
+  }
+}
+
+const factsLine = (session: string) => `\t${session}\twin\t/private/tmp/tmux-501/proj\t%5\n`;
+const registers = (fake: FakeDuplex) =>
+  fake.writes.map((w) => JSON.parse(w)).filter((f) => f.cmd === "session.register");
+
+// Guards: a pane whose tmux read fails (a busy server during a reload storm)
+// never registers under the fallback identity; it retries on the socket's
+// backoff and registers once, under the pane's own session.
+test("in tmux, a failed facts read retries and registers once under the pane's session", async () => {
+  await inTmux(async () => {
+    const { pi, fire } = makeFakePi();
+    const fake = new FakeDuplex();
+    let reads = 0;
+    createExtension(pi, {
+      connect: async () => fake,
+      getPermissionsService: () => undefined,
+      runTmux: async () => {
+        reads++;
+        if (reads === 1) throw new Error("tmux timed out");
+        return factsLine("tools-workspace/hail-coordinator");
+      },
+    });
+    fire("session_start", {}, makeCtx());
+    await tick();
+    await tick();
+    assert.equal(registers(fake).length, 0, "no register while the pane's facts are unknown");
+    await new Promise((r) => setTimeout(r, 700));
+    const regs = registers(fake);
+    assert.equal(regs.length, 1, "registers exactly once after the retry");
+    assert.equal(regs[0].args.identity, "proj");
+    assert.equal(regs[0].args.project, "tools-workspace");
+    assert.equal(regs[0].args.work, "hail-coordinator");
+    assert.equal(reads, 2);
+  });
+});
+
+// Guards: identity is worked out at every register, so a reconnect sends the
+// pane's current identity rather than the one it started with.
+test("in tmux, a reconnect after the facts change registers the new identity", async () => {
+  await inTmux(async () => {
+    const { pi, fire } = makeFakePi();
+    const fake = new FakeDuplex();
+    let session = "tools-workspace/one";
+    createExtension(pi, {
+      connect: async () => fake,
+      getPermissionsService: () => undefined,
+      runTmux: async () => factsLine(session),
+    });
+    fire("session_start", {}, makeCtx());
+    await tick();
+    await tick();
+    fake.push('{"ok":true,"data":{"hostId":"h","daemonVersion":"0.3.0","accepted":true}}\n');
+    await tick();
+    session = "tools-workspace/two";
+    fake.emit("close");
+    await new Promise((r) => setTimeout(r, 700));
+    const regs = registers(fake);
+    assert.equal(regs.length, 2);
+    assert.equal(regs[0].args.work, "one");
+    assert.equal(regs[1].args.work, "two");
+    assert.equal(regs[1].args.identity, "proj");
+  });
+});
+
+// Guards: a bare terminal (no $TMUX) registers the fallback identity at once, as before.
+test("no $TMUX registers the fallback identity without reading tmux", async () => {
+  const { pi, fire } = makeFakePi();
+  const fake = new FakeDuplex();
+  let reads = 0;
+  createExtension(pi, {
+    connect: async () => fake,
+    getPermissionsService: () => undefined,
+    runTmux: async () => {
+      reads++;
+      return factsLine("tools-workspace/x");
+    },
+  });
+  fire("session_start", {}, makeCtx());
+  await tick();
+  await tick();
+  const regs = registers(fake);
+  assert.equal(regs.length, 1);
+  assert.equal(regs[0].args.identity, "fallback");
+  assert.equal(regs[0].args.project, "acceptance");
+  assert.equal(reads, 0);
+});
+
 // Guards: turn lifecycle is emitted ONLY as {turn} frames — never also as an {event} carrying a pi turn rpc, or the daemon rotates turn keys twice per turn (C4, bridge PR #140).
 test("turn lifecycle emits only {turn} frames, never a forwarded {event}", async () => {
   const { pi, fire } = makeFakePi();
