@@ -401,6 +401,12 @@ export class Session {
     this.sendBoundary({ event: piEvent });
   }
 
+  /** How many background subagents run now; the phone shows Working while any do. */
+  backgroundRunning(running: number): void {
+    if (!this.isActive) return;
+    this.sendBoundary({ background: { running } });
+  }
+
   /**
    * Turn boundary the phone needs to gate its composer. Attributes the turn to
    * the phone (locking local input) when a phone prompt was just injected.

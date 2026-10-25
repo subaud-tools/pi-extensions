@@ -55,6 +55,8 @@ export type RegisterReply =
 export type Outbound =
   | { event: unknown; cursor?: number; replay?: boolean; claim?: string }
   | { turn: "start" | "end" }
+  // How many background subagents run now, sent on each change.
+  | { background: { running: number } }
   | { lock: "held" | "released" }
   | { exit: { code: number } }
   // Replies about a prompt echo the daemon's opaque `attempt` (0.8.0) unchanged

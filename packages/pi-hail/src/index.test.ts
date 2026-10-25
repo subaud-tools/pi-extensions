@@ -813,3 +813,30 @@ test("{ superseded:true } shows a one-line notice", async () => {
   await tick();
   assert.equal(notify.calls.length, 1, "exactly one notice on superseded");
 });
+
+// Background subagents (@tintinweb/pi-subagents on pi.events) keep the session
+// working on the phone: each change in how many run is one { background } frame.
+test("running subagents are counted by id and sent as { background: { running } }", async () => {
+  const { pi, fire, fireBus } = makeFakePi();
+  const fake = new FakeDuplex();
+  createExtension(pi, {
+    connect: async () => fake,
+    getPermissionsService: () => undefined,
+    getTmuxSessionId: () => undefined,
+  });
+  fire("session_start", {}, makeCtx());
+  await tick();
+  await tick();
+  fake.push('{"ok":true,"data":{"hostId":"h","daemonVersion":"0.3.0","accepted":true}}\n');
+  await tick();
+  fireBus("subagents:started", { id: "a", type: "worker", description: "x" });
+  fireBus("subagents:started", { id: "b", type: "worker", description: "y" });
+  fireBus("subagents:completed", { id: "a" });
+  fireBus("subagents:failed", { id: "b" });
+  const counts = fake.writes
+    .slice(1)
+    .map((w) => JSON.parse(w))
+    .filter((f) => f.background)
+    .map((f) => f.background.running);
+  assert.deepEqual(counts, [1, 2, 1, 0]);
+});
