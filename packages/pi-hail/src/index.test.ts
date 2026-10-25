@@ -44,7 +44,7 @@ function spy<A extends unknown[]>(): Spy<A> {
 function makeFakePi() {
   const handlers = new Map<string, ((event: unknown, ctx: unknown) => unknown)[]>();
   const busHandlers = new Map<string, ((data: unknown) => unknown)[]>();
-  const sendUserMessage = spy<[string]>();
+  const sendUserMessage = spy<[unknown]>();
   const pi = {
     on(ev: string, h: (event: unknown, ctx: unknown) => unknown) {
       const list = handlers.get(ev) ?? [];
@@ -58,7 +58,7 @@ function makeFakePi() {
         busHandlers.set(ch, list);
       },
     },
-    sendUserMessage: (t: string) => sendUserMessage(t),
+    sendUserMessage: (content: unknown) => sendUserMessage(content),
     registerCommand: () => {},
   };
   return {
@@ -287,6 +287,45 @@ test("inbound prompt calls pi.sendUserMessage", async () => {
   await tick();
   assert.equal(sendUserMessage.calls.length, 1);
   assert.deepEqual(sendUserMessage.calls[0], ["do it"]);
+});
+
+// Guards: a phone photo on the socket reaches pi.sendUserMessage as image content.
+test("inbound prompt with an image calls pi.sendUserMessage with text and image content", async () => {
+  const { pi, fire, sendUserMessage } = makeFakePi();
+  const fake = new FakeDuplex();
+  createExtension(pi, { connect: async () => fake, getPermissionsService: () => undefined });
+  fire("session_start", {}, makeCtx());
+  await tick();
+  await tick();
+  fake.push('{"ok":true,"data":{"hostId":"h","daemonVersion":"0.3.0","accepted":true}}\n');
+  await tick();
+  fake.push('{"prompt":{"text":"look","from":"p1","requestId":"r1","image":{"data":"/9j/4AAQ","mimeType":"image/jpeg"}}}\n');
+  await tick();
+  assert.deepEqual(sendUserMessage.calls, [
+    [[{ type: "text", text: "look" }, { type: "image", data: "/9j/4AAQ", mimeType: "image/jpeg" }]],
+  ]);
+});
+
+// Guards: the daemon's { abort: {} } reaches pi's own ctx.abort() (DCSN6): the
+// context from session_start is kept for the session's life, not only inside it.
+test("inbound abort calls ctx.abort() while pi is busy, and not while idle", async () => {
+  const { pi, fire } = makeFakePi();
+  const fake = new FakeDuplex();
+  createExtension(pi, { connect: async () => fake, getPermissionsService: () => undefined });
+  const abort = spy<[]>();
+  let idle = true;
+  fire("session_start", {}, makeCtx({ abort, isIdle: () => idle }));
+  await tick();
+  await tick();
+  fake.push('{"ok":true,"data":{"hostId":"h","daemonVersion":"0.3.0","accepted":true}}\n');
+  await tick();
+  fake.push('{"abort":{}}\n');
+  await tick();
+  assert.equal(abort.calls.length, 0, "no turn running: nothing to stop");
+  idle = false;
+  fake.push('{"abort":{}}\n');
+  await tick();
+  assert.equal(abort.calls.length, 1);
 });
 
 // Guards: local typing during a phone-driven turn is HELD (not passed through to pi) — the soft-lock input hold (spec §4).

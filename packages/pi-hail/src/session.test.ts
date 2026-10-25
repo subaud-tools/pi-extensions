@@ -176,6 +176,7 @@ test("a prompt whose injection throws echoes the attempt on { refused error }", 
   const sent: unknown[] = [];
   const deps = {
     send: (o: unknown) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {
       throw new Error("boom");
     },
@@ -223,6 +224,7 @@ test("a phone prompt whose sendUserMessage throws replies { refused reason:'erro
   const sent: unknown[] = [];
   const deps = {
     send: (o: unknown) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {
       throw new Error("turn busy");
     },
@@ -240,6 +242,7 @@ test("onResend sends { resend:'done', error } when reading entries throws", () =
   const sent: unknown[] = [];
   const deps = {
     send: (o: unknown) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {},
     ui: { setStatus: () => {}, notify: () => {}, holdInput: () => {} },
     getEntries: () => {
@@ -426,6 +429,7 @@ function recDeps() {
   };
   r.deps = {
     send: (o) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {},
     ui: {
       setStatus: (t) => statuses.push(t),
@@ -546,6 +550,7 @@ test("resend error path carries the claim on done", () => {
   const sent: unknown[] = [];
   const deps = {
     send: (o: unknown) => sent.push(o),
+    abort: () => {},
     sendUserMessage: () => {},
     ui: { setStatus: () => {}, notify: () => {}, holdInput: () => {} },
     getEntries: () => {
@@ -1005,3 +1010,56 @@ for (const deliverAs of ["steer", "followUp"] as const) {
     assert.equal(deps.send.calls.some(([frame]) => (frame as { lock?: string }).lock === "held"), true);
   });
 }
+
+// Guards: a phone photo reaches pi as image content in the user message, after
+// the text block (none when the text is empty), whether plain, steer or followUp.
+{
+  const image = { data: "/9j/4AAQ", mimeType: "image/jpeg" };
+  const both = [{ type: "text", text: "what is this?" }, { type: "image", ...image }];
+  for (const deliverAs of [undefined, "steer", "followUp"] as const) {
+    test(`an image prompt (${deliverAs ?? "plain"}) hands pi text and image content`, () => {
+      const deps = fakeDeps();
+      if (deliverAs) deps.isIdle = () => false;
+      const s = new Session(deps);
+      s.onInbound({ prompt: { text: "what is this?", from: "p1", requestId: "r1", image, ...(deliverAs && { deliverAs }) } });
+      assert.deepEqual(deps.sendUserMessage.calls, [deliverAs ? [both, { deliverAs }] : [both]]);
+      assert.deepEqual(lastSend(deps), { accepted: { requestId: "r1" } });
+    });
+  }
+
+  test("an image with no text hands pi the image alone", () => {
+    const deps = fakeDeps();
+    const s = new Session(deps);
+    s.onInbound({ prompt: { text: "", from: "p1", requestId: "r1", image } });
+    assert.deepEqual(deps.sendUserMessage.calls, [[[{ type: "image", ...image }]]]);
+  });
+}
+
+// Guards: the phone's Stop stops pi's turn (DCSN6). The daemon's { abort: {} }
+// calls pi's ctx.abort() once while a turn runs, whoever started it.
+for (const busyVia of ["phone_turn", "local_turn", "isIdle"] as const) {
+  test(`abort while busy via ${busyVia} calls ctx.abort() once`, () => {
+    const deps = fakeDeps();
+    const s = new Session(deps);
+    if (busyVia === "phone_turn") {
+      s.onInbound({ prompt: { text: "go", from: "p1", requestId: "r1" } });
+      s.turnStart();
+    } else if (busyVia === "local_turn") s.turnStart();
+    else deps.isIdle = () => false;
+    const before = deps.send.calls.length;
+    s.onInbound({ abort: {} });
+    assert.equal(deps.abort.calls.length, 1);
+    assert.equal(deps.send.calls.length, before, "abort answers nothing on the wire");
+  });
+}
+
+// Guards: Stop with no turn running is a no-op, not an abort of nothing.
+test("abort with no turn running does nothing", () => {
+  const deps = fakeDeps();
+  const s = new Session(deps);
+  s.onInbound({ abort: {} });
+  s.turnStart();
+  s.turnEnd();
+  s.onInbound({ abort: {} });
+  assert.equal(deps.abort.calls.length, 0);
+});

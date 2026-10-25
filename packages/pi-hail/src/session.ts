@@ -4,7 +4,8 @@
 // state machine, presence, replay, and authorizer land in later tasks — the
 // state fields below are declared now so those tasks only ADD, not rewrite.
 
-import type { Phone, RegisterArgs, RegisterReply } from "./protocol.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isAbortFrame, type Phone, type PromptImage, type RegisterArgs, type RegisterReply } from "./protocol.ts";
 import { entriesAfter, PERSISTED_ROLES, trimFrames } from "./replay.ts";
 import { presenceToStatus } from "./status.ts";
 import { EXTENSION_VERSION } from "./version.ts";
@@ -82,11 +83,22 @@ export type TimerHandle = unknown;
 /** Status-line presence classification. */
 export type PresenceState = "connected" | "driving" | "offline";
 
+/** What pi.sendUserMessage takes: text, or text and image content. */
+export type UserContent = Parameters<ExtensionAPI["sendUserMessage"]>[0];
+
+/** A phone prompt as pi's content: the text alone, or a text block (when
+ *  there is text) followed by the image. */
+function promptContent(text: string, image?: PromptImage): UserContent {
+  if (!image) return text;
+  const img = { type: "image" as const, data: image.data, mimeType: image.mimeType };
+  return text ? [{ type: "text" as const, text }, img] : [img];
+}
+
 export interface SessionDeps {
   /** → daemon */
   send: (obj: unknown) => void;
   /** pi.sendUserMessage */
-  sendUserMessage: (text: string, options?: { deliverAs: "steer" | "followUp" }) => void;
+  sendUserMessage: (content: UserContent, options?: { deliverAs: "steer" | "followUp" }) => void;
   /**
    * pi's own idle check (ctx.isIdle()). pi's sendUserMessage returns void and
    * swallows its own busy rejection, so a phone prompt injected while pi is
@@ -96,6 +108,11 @@ export interface SessionDeps {
    * Absent (older wiring) means assume idle.
    */
   isIdle?: () => boolean;
+  /**
+   * pi's ctx.abort(): stop the running turn (the phone's Stop). Called only
+   * while a turn runs.
+   */
+  abort: () => void;
   ui: {
     setStatus: (text: string | undefined) => void;
     notify: (msg: string, level?: "info" | "warning" | "error") => void;
@@ -481,6 +498,7 @@ export class Session {
         requestId: string;
         attempt?: string;
         deliverAs?: "steer" | "followUp";
+        image?: PromptImage;
       };
       // The daemon's opaque `attempt` names THIS inject; every reply about the
       // prompt echoes it unchanged (as the resend claim is), so the daemon can
@@ -505,8 +523,9 @@ export class Session {
         this.phase = "phone_turn";
       }
       try {
-        if (queued) this.deps.sendUserMessage(prompt.text, { deliverAs: queued });
-        else this.deps.sendUserMessage(prompt.text);
+        const content = promptContent(prompt.text, prompt.image);
+        if (queued) this.deps.sendUserMessage(content, { deliverAs: queued });
+        else this.deps.sendUserMessage(content);
       } catch (err) {
         // A failed queued injection must not disturb the running turn.
         if (!queued) {
@@ -566,6 +585,13 @@ export class Session {
       if (value === "allow" || value === "deny") {
         this.deps.answerPrompt?.(answer.requestId, value);
       }
+      return;
+    }
+    if (isAbortFrame(m)) {
+      // The phone's Stop: stop pi's running turn, whoever started it. With no
+      // turn running there is nothing to stop.
+      const busy = this.phase !== "idle" || this.deps.isIdle?.() === false;
+      if (busy) this.deps.abort();
       return;
     }
     if ("ctl" in m) {

@@ -3,7 +3,7 @@
 // It lives under src/ so `files: ["src", ...]` still ships it, and the package
 // test glob (`src/*.test.ts`) does not match `test-helpers.ts`.
 
-import type { SessionDeps } from "./session.ts";
+import type { SessionDeps, UserContent } from "./session.ts";
 
 interface Recorder<A extends unknown[]> {
   (...args: A): void;
@@ -28,11 +28,12 @@ function recorder<A extends unknown[]>(): Recorder<A> {
 /** Reusable fake dependency set. Later tasks extend this. */
 export function fakeDeps() {
   const send = recorder<[unknown]>();
-  const sendUserMessage = recorder<[string, { deliverAs: "steer" | "followUp" }?]>();
+  const sendUserMessage = recorder<[UserContent, { deliverAs: "steer" | "followUp" }?]>();
   const setStatus = recorder<[string | undefined]>();
   const notify = recorder<[string, ("info" | "warning" | "error")?]>();
   const holdInput = recorder<[boolean]>();
   const answerPrompt = recorder<[string, "allow" | "deny"]>();
+  const abort = recorder<[]>();
   const getEntries = (): unknown[] => [];
   const deps: SessionDeps & {
     send: typeof send;
@@ -43,6 +44,7 @@ export function fakeDeps() {
       holdInput: typeof holdInput;
     };
     answerPrompt: typeof answerPrompt;
+    abort: typeof abort;
     getEntries: typeof getEntries;
     isIdle: () => boolean;
   } = {
@@ -50,6 +52,7 @@ export function fakeDeps() {
     sendUserMessage,
     ui: { setStatus, notify, holdInput },
     answerPrompt,
+    abort,
     getEntries,
     // pi's own idle check (default idle so prompts inject); tests flip to false.
     isIdle: () => true,

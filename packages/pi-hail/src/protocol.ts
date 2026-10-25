@@ -83,14 +83,39 @@ export type Outbound =
       };
     };
 
+/** The phone's one image on a prompt: base64 bytes and their MIME type. */
+export interface PromptImage {
+  data: string;
+  mimeType: string;
+}
+
 /** Daemon → extension, one JSON object per line after register. */
 export type Inbound =
-  | { prompt: { text: string; from: string; requestId: string; attempt?: string; deliverAs?: "steer" | "followUp" } }
+  | {
+      prompt: {
+        text: string;
+        from: string;
+        requestId: string;
+        attempt?: string;
+        deliverAs?: "steer" | "followUp";
+        image?: PromptImage;
+      };
+    }
   | { presence: { phones: Phone[] } }
   | { answer: { requestId: string; value: unknown } }
   | { ctl: "stop" }
+  // The phone's Stop (PLAN4): stop pi's running turn. Not `ctl: "stop"`, which
+  // ends the session.
+  | { abort: Record<string, never> }
   | { connection: "connected" | "disconnected" | "unavailable" }
   | { resend: { since: number; limit?: number; claim?: string } };
+
+/** True for the daemon's `{ abort: {} }` frame, and for nothing else. */
+export function isAbortFrame(msg: unknown): boolean {
+  if (msg == null || typeof msg !== "object" || !("abort" in msg)) return false;
+  const v = (msg as { abort: unknown }).abort;
+  return v != null && typeof v === "object" && !Array.isArray(v);
+}
 
 /** Serialize an object to a single NDJSON line (JSON + trailing newline). */
 export function encodeLine(obj: unknown): string {
