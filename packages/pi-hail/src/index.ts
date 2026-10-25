@@ -217,6 +217,9 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
   // permissions:ready bus handler (which gets no ctx) can surface the
   // missing-seam warning through pi's UI.
   let uiNotify: ((msg: string, level: "info" | "warning" | "error") => void) | undefined;
+  // The ids of this session's background subagents still running
+  // (@tintinweb/pi-subagents' subagents:started minus completed/failed).
+  const subagents = new Set<string>();
 
   // Register (and, on a reconnect, replay). Both the first call and every
   // reconnect must swallow a rejected promise: a dead daemon rejects, and pi
@@ -244,6 +247,7 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
       if (disposed) return; // a disposed instance never re-binds
       if (ownsThisPane) return; // this instance already bound its one session
       ownsThisPane = true;
+      subagents.clear();
 
       const c = ctx as {
         cwd: string;
@@ -539,6 +543,21 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
       session.onDecision(d.requestId, d.result, by);
     }),
   );
+
+  // Background subagents keep the session working on the phone: each change in
+  // how many run is sent to the daemon.
+  const subagentChanged = (data: unknown, running: boolean): void => {
+    if (!ownsThisPane || !session) return;
+    const id = (data as { id?: unknown } | null)?.id;
+    if (typeof id !== "string") return;
+    const before = subagents.size;
+    if (running) subagents.add(id);
+    else subagents.delete(id);
+    if (subagents.size !== before) session.backgroundRunning(subagents.size);
+  };
+  pi.events?.on?.("subagents:started", (data: unknown) => safe(() => subagentChanged(data, true)));
+  pi.events?.on?.("subagents:completed", (data: unknown) => safe(() => subagentChanged(data, false)));
+  pi.events?.on?.("subagents:failed", (data: unknown) => safe(() => subagentChanged(data, false)));
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
