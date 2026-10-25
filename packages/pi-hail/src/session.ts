@@ -4,7 +4,7 @@
 // state machine, presence, replay, and authorizer land in later tasks — the
 // state fields below are declared now so those tasks only ADD, not rewrite.
 
-import type { Phone, RegisterArgs, RegisterReply } from "./protocol.ts";
+import { isAbortFrame, type Phone, type RegisterArgs, type RegisterReply } from "./protocol.ts";
 import { entriesAfter, PERSISTED_ROLES, trimFrames } from "./replay.ts";
 import { presenceToStatus } from "./status.ts";
 import { EXTENSION_VERSION } from "./version.ts";
@@ -96,6 +96,11 @@ export interface SessionDeps {
    * Absent (older wiring) means assume idle.
    */
   isIdle?: () => boolean;
+  /**
+   * pi's ctx.abort(): stop the running turn (the phone's Stop). Called only
+   * while a turn runs. Absent (older wiring) means a phone Stop is inert.
+   */
+  abort?: () => void;
   ui: {
     setStatus: (text: string | undefined) => void;
     notify: (msg: string, level?: "info" | "warning" | "error") => void;
@@ -566,6 +571,13 @@ export class Session {
       if (value === "allow" || value === "deny") {
         this.deps.answerPrompt?.(answer.requestId, value);
       }
+      return;
+    }
+    if (isAbortFrame(m)) {
+      // The phone's Stop: stop pi's running turn, whoever started it. With no
+      // turn running there is nothing to stop.
+      const busy = this.phase !== "idle" || this.deps.isIdle?.() === false;
+      if (busy) this.deps.abort?.();
       return;
     }
     if ("ctl" in m) {

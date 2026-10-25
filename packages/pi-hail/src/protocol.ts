@@ -89,8 +89,18 @@ export type Inbound =
   | { presence: { phones: Phone[] } }
   | { answer: { requestId: string; value: unknown } }
   | { ctl: "stop" }
+  // The phone's Stop (PLAN4): stop pi's running turn. Not `ctl: "stop"`, which
+  // ends the session.
+  | { abort: Record<string, never> }
   | { connection: "connected" | "disconnected" | "unavailable" }
   | { resend: { since: number; limit?: number; claim?: string } };
+
+/** True for the daemon's `{ abort: {} }` frame, and for nothing else. */
+export function isAbortFrame(msg: unknown): boolean {
+  if (msg == null || typeof msg !== "object" || !("abort" in msg)) return false;
+  const v = (msg as { abort: unknown }).abort;
+  return v != null && typeof v === "object" && !Array.isArray(v);
+}
 
 /** Serialize an object to a single NDJSON line (JSON + trailing newline). */
 export function encodeLine(obj: unknown): string {

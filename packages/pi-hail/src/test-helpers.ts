@@ -33,6 +33,7 @@ export function fakeDeps() {
   const notify = recorder<[string, ("info" | "warning" | "error")?]>();
   const holdInput = recorder<[boolean]>();
   const answerPrompt = recorder<[string, "allow" | "deny"]>();
+  const abort = recorder<[]>();
   const getEntries = (): unknown[] => [];
   const deps: SessionDeps & {
     send: typeof send;
@@ -43,6 +44,7 @@ export function fakeDeps() {
       holdInput: typeof holdInput;
     };
     answerPrompt: typeof answerPrompt;
+    abort: typeof abort;
     getEntries: typeof getEntries;
     isIdle: () => boolean;
   } = {
@@ -50,6 +52,7 @@ export function fakeDeps() {
     sendUserMessage,
     ui: { setStatus, notify, holdInput },
     answerPrompt,
+    abort,
     getEntries,
     // pi's own idle check (default idle so prompts inject); tests flip to false.
     isIdle: () => true,

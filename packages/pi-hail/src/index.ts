@@ -251,6 +251,8 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
         // pi's own idle check lives on the ExtensionContext (dist/core/extensions
         // /types.d.ts: isIdle(): boolean), NOT on the ExtensionAPI (`pi`).
         isIdle: () => boolean;
+        // pi's ExtensionContext.abort() (types.d.ts): stops the running turn.
+        abort: () => void;
         ui: {
           setStatus: (key: string, text: string | undefined) => void;
           notify: (msg: string, level: "info" | "warning" | "error") => void;
@@ -306,6 +308,9 @@ export function createExtension(pi: any, deps: ExtensionDeps = {}): void {
         // options use pi’s native queue instead. isIdle() is a method of the
         // ExtensionContext (`c`), not the ExtensionAPI (`pi`).
         isIdle: () => c.isIdle(),
+        // The phone's Stop. `c` is this session's context, kept by the closure
+        // for the session's life (session_start is the only place pi hands it).
+        abort: () => c.abort(),
         ui: {
           setStatus: (text) => c.ui.setStatus("pi-hail", text),
           notify: (msg, level) => c.ui.notify(msg, level ?? "info"),

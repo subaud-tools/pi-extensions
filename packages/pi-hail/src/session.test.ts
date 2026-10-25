@@ -1005,3 +1005,32 @@ for (const deliverAs of ["steer", "followUp"] as const) {
     assert.equal(deps.send.calls.some(([frame]) => (frame as { lock?: string }).lock === "held"), true);
   });
 }
+
+// Guards: the phone's Stop stops pi's turn (DCSN6). The daemon's { abort: {} }
+// calls pi's ctx.abort() once while a turn runs, whoever started it.
+for (const busyVia of ["phone_turn", "local_turn", "isIdle"] as const) {
+  test(`abort while busy via ${busyVia} calls ctx.abort() once`, () => {
+    const deps = fakeDeps();
+    const s = new Session(deps);
+    if (busyVia === "phone_turn") {
+      s.onInbound({ prompt: { text: "go", from: "p1", requestId: "r1" } });
+      s.turnStart();
+    } else if (busyVia === "local_turn") s.turnStart();
+    else deps.isIdle = () => false;
+    const before = deps.send.calls.length;
+    s.onInbound({ abort: {} });
+    assert.equal(deps.abort.calls.length, 1);
+    assert.equal(deps.send.calls.length, before, "abort answers nothing on the wire");
+  });
+}
+
+// Guards: Stop with no turn running is a no-op, not an abort of nothing.
+test("abort with no turn running does nothing", () => {
+  const deps = fakeDeps();
+  const s = new Session(deps);
+  s.onInbound({ abort: {} });
+  s.turnStart();
+  s.turnEnd();
+  s.onInbound({ abort: {} });
+  assert.equal(deps.abort.calls.length, 0);
+});

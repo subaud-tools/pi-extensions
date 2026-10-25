@@ -289,6 +289,28 @@ test("inbound prompt calls pi.sendUserMessage", async () => {
   assert.deepEqual(sendUserMessage.calls[0], ["do it"]);
 });
 
+// Guards: the daemon's { abort: {} } reaches pi's own ctx.abort() (DCSN6): the
+// context from session_start is kept for the session's life, not only inside it.
+test("inbound abort calls ctx.abort() while pi is busy, and not while idle", async () => {
+  const { pi, fire } = makeFakePi();
+  const fake = new FakeDuplex();
+  createExtension(pi, { connect: async () => fake, getPermissionsService: () => undefined });
+  const abort = spy<[]>();
+  let idle = true;
+  fire("session_start", {}, makeCtx({ abort, isIdle: () => idle }));
+  await tick();
+  await tick();
+  fake.push('{"ok":true,"data":{"hostId":"h","daemonVersion":"0.3.0","accepted":true}}\n');
+  await tick();
+  fake.push('{"abort":{}}\n');
+  await tick();
+  assert.equal(abort.calls.length, 0, "no turn running: nothing to stop");
+  idle = false;
+  fake.push('{"abort":{}}\n');
+  await tick();
+  assert.equal(abort.calls.length, 1);
+});
+
 // Guards: local typing during a phone-driven turn is HELD (not passed through to pi) — the soft-lock input hold (spec §4).
 test("interactive input during a phone turn is held, but passes through while idle", async () => {
   const { pi, fire } = makeFakePi();
