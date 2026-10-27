@@ -2,6 +2,10 @@
 
 ## 0.8.0
 
+- A phone Stop stops pi: the daemon's `{ abort: {} }` frame calls pi's abort once while a turn runs, and does nothing when pi is idle.
+- A phone prompt may carry one image; pi-hail hands it to pi as image content (`sendUserMessage([{ type: "text" }, { type: "image" }])`) for plain, steer and follow-up prompts.
+- pi-hail counts the background subagents `@tintinweb/pi-subagents` reports (`subagents:started`, `:completed`, `:failed`) and tells the daemon `{ background: { running: n } }`, so the phone shows the session Working while any runs.
+- After pi reloads its extensions, a pane always comes back under its own session: a failed tmux lookup retries on the socket's backoff instead of registering a fallback identity, the identity is worked out on every register, and the lookup is asynchronous with a 5 s timeout.
 - Phone Steer and follow-up prompts use pi’s native delivery options while busy, without claiming the next turn; idle prompts retain normal phone ownership.
 
 - **The daemon's opaque prompt `attempt` is echoed on every reply about that
