@@ -1,10 +1,11 @@
 // pi-copy — copy one part of the last answer: a code block exactly as
-// written, or the prose as plain text.
+// written, a quoted message, or the prose as plain text.
 //
 // The answer is read from the session (the same message pi's /copy uses),
 // never from the screen, so nothing copied carries pi's wrapping or borders.
 // `/copy-part` always opens a picker of the parts; alt+c copies the one code
-// block at once when there is exactly one, and opens the picker otherwise.
+// block at once when there is exactly one, or the one quote when there is no
+// code block, and opens the picker otherwise.
 // The copy goes through pi's own copyToClipboard, which also reaches the
 // local clipboard from tmux and over SSH (OSC 52).
 //
@@ -54,9 +55,11 @@ export function createCopy(pi: any, deps: Deps = {}): void {
     }
     const parts = splitParts(text);
     const code = parts.filter((p) => p.kind === "code");
+    const quote = parts.filter((p) => p.kind === "quote");
+    const only = code.length === 1 ? code[0] : code.length === 0 && quote.length === 1 ? quote[0] : undefined;
     let part: Part | undefined;
-    if (!alwaysPick && code.length === 1) {
-      part = code[0];
+    if (!alwaysPick && only) {
+      part = only;
     } else {
       const label = await ctx.ui.select(
         "Copy which part?",
@@ -74,7 +77,7 @@ export function createCopy(pi: any, deps: Deps = {}): void {
   }
 
   pi.registerCommand("copy-part", {
-    description: "Copy one part of the last answer: a code block as written, or the prose as plain text",
+    description: "Copy one part of the last answer: a code block as written, a quoted message, or the prose as plain text",
     handler: async (_args: string, ctx: any) => run(ctx, true),
   });
 
