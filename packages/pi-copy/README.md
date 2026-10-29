@@ -1,22 +1,23 @@
 # pi-copy
 
-A pi extension that copies **one part** of the last answer so it pastes cleanly: a code block exactly as written (a long command continued with `\` pastes into a terminal and runs), or the prose as plain text (one line per paragraph, ready for an email).
+A pi extension that copies **one part** of the last answer so it pastes cleanly: a code block exactly as written (a long command continued with `\` pastes into a terminal and runs), a quoted message on its own, or the prose as plain text (one line per paragraph, ready for an email).
 
 Pi's own `/copy` (Ctrl+X) copies the whole last answer as markdown source, fences and marks included; drag-selecting copies the rendered screen, wraps and borders included. pi-copy reads the answer's source text from the session instead, never the screen.
 
 ## Use
 
 - `/copy-part` opens a picker of the answer's parts. Enter copies the chosen part; Escape copies nothing.
-- **alt+c** does the same, except that when the answer has exactly one code block it copies that block at once.
+- **alt+c** does the same, except that it copies at once when the answer has exactly one code block, or no code block and exactly one quote.
 - After a copy, a one-line notice names what was copied and its size, such as `Copied code block (1 line, 148 chars)`. With no answer yet it says `No answer to copy yet.`
 
 ## The parts
 
 - **Each code block**, in order, labelled with its language and its first line. Copied as its exact text: no fences, no indent, no trailing newline. A block inside a list item counts too.
+- **Each quote**, in order, labelled with its first line: every blockquote not inside another, a blockquote in a list item included. Copied as plain text by the prose rules below, without the `>` marks, with any code block inside it in place. A message an answer writes for someone else, such as one under "Message for Dana:", is usually a quote.
 - **The prose**: everything outside the code blocks, as plain text. Paragraphs are one line each, separated by a blank line; bold, italic, inline code and strike marks are removed; a link becomes `text (url)`, or just the address when the two are the same; headings are their text on a line of their own; list items keep `- ` or `1. ` with two spaces per nesting level; a blockquote loses its `>`; a table is copied as its markdown source rows.
 - **All**: the whole answer, the prose as above with each code block's text in place.
 
-An answer with no code blocks has only the prose part; one with no prose has only its code blocks.
+An answer with no code blocks or quotes has only the prose part; one with no prose has only its code blocks.
 
 Only the last answer is read. An earlier answer can still be copied whole from `/tree` with Ctrl+X.
 
@@ -28,7 +29,7 @@ Only the last answer is read. An earlier answer can still be copied whole from `
 
 ## Tests
 
-`node --test src/*.test.ts`: the parts and each part's copied text (continued commands, a block in a list, paragraphs, inline marks, links, headings, nested lists, blockquotes, tables, the notice), and the wiring against a fake pi (alt+c's one-block shortcut, the picker, Escape, no answer, an aborted answer skipped).
+`node --test src/*.test.ts`: the parts and each part's copied text (continued commands, a block in a list, paragraphs, inline marks, links, headings, nested lists, blockquotes, quote parts, tables, the notice), and the wiring against a fake pi (alt+c's one-block and one-quote shortcuts, the picker, Escape, no answer, an aborted answer skipped).
 
 ## Install
 

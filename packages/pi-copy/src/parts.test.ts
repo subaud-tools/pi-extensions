@@ -156,3 +156,72 @@ test("notice counts lines of a multi-line part", () => {
 
   assert.equal(notice(parts[0]!), "Copied prose (3 lines, 31 chars)");
 });
+
+// The answer that copied whole: a message for someone else in a blockquote, no code block.
+const salomonQuote =
+  "Dev Fetch’s CRM now works. Please use your existing local dashboard against dev Fetch to walk a pitch deck and questionnaire through Make it, open the results, and verify Made with Prism. Also check Change before confirming. No separately hosted dashboard needed.";
+const salomon = [
+  "Updated ASK3: no Amplify branch, just the local walkthrough against dev Fetch.",
+  "",
+  "Message for Salomon:",
+  "",
+  "> Dev Fetch’s CRM now works. Please use your existing local dashboard against dev Fetch to walk a pitch deck",
+  "> and questionnaire through Make it, open the results, and verify Made with Prism. Also check Change before",
+  "> confirming. No separately hosted dashboard needed.",
+  "",
+  "Saved and pushed as `d31765e`.",
+].join("\n");
+
+test("a blockquote is its own part, copied as one line without the > marks", () => {
+  const parts = splitParts(salomon);
+
+  assert.deepEqual(
+    parts.map((p) => p.kind),
+    ["quote", "prose", "all"],
+  );
+  assert.equal(parts[0]!.label, "Quote 1: Dev Fetch’s CRM now works. Please use your existing local d…");
+  assert.equal(parts[0]!.text, salomonQuote);
+  assert.equal(notice(parts[0]!), "Copied quote (1 line, 263 chars)");
+});
+
+test("the prose part still holds the whole answer, quote included", () => {
+  assert.equal(
+    prose(salomon),
+    `Updated ASK3: no Amplify branch, just the local walkthrough against dev Fetch.\n\nMessage for Salomon:\n\n${salomonQuote}\n\nSaved and pushed as d31765e.`,
+  );
+});
+
+test("a blockquote inside a list item is a part", () => {
+  const answer = "1. Send Dana this:\n\n   > The deck is ready for Thursday.\n\n2. Then book the room.";
+
+  const quotes = splitParts(answer).filter((p) => p.kind === "quote");
+
+  assert.deepEqual(
+    quotes.map((p) => p.text),
+    ["The deck is ready for Thursday."],
+  );
+});
+
+test("a blockquote inside a blockquote is one part with the outer one", () => {
+  const answer = "Forward this:\n\n> Hi Dana,\n>\n> > Can we move to Friday?\n>\n> Friday works.";
+
+  const quotes = splitParts(answer).filter((p) => p.kind === "quote");
+
+  assert.deepEqual(
+    quotes.map((p) => p.text),
+    ["Hi Dana,\n\nCan we move to Friday?\n\nFriday works."],
+  );
+});
+
+test("a code block inside a quote is copied in place and is still its own part", () => {
+  const answer = "Tell Sam:\n\n> Run this to log in:\n>\n> ```sh\n> aws sso login --profile fetch\n> ```\n>\n> Then retry the deploy.";
+
+  const parts = splitParts(answer);
+
+  assert.deepEqual(
+    parts.map((p) => p.kind),
+    ["code", "quote", "prose", "all"],
+  );
+  assert.equal(parts[0]!.text, "aws sso login --profile fetch");
+  assert.equal(parts[1]!.text, "Run this to log in:\n\naws sso login --profile fetch\n\nThen retry the deploy.");
+});

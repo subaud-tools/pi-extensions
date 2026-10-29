@@ -66,6 +66,37 @@ test("alt+c with one code block copies it without the picker", async () => {
   assert.deepEqual(f.notices, ["Copied code block (1 line, 41 chars)"]);
 });
 
+const salomon =
+  "Message for Salomon:\n\n> Dev Fetch’s CRM now works. Please walk a pitch deck through Make it.\n\nSaved and pushed as `d31765e`.";
+
+test("alt+c with one quote and no code block copies the quote without the picker", async () => {
+  const f = makeFixture([assistant(salomon)]);
+
+  await f.altC();
+
+  assert.equal(f.selects.length, 0);
+  assert.deepEqual(f.copied, ["Dev Fetch’s CRM now works. Please walk a pitch deck through Make it."]);
+  assert.deepEqual(f.notices, ["Copied quote (1 line, 68 chars)"]);
+});
+
+test("alt+c with one code block and one quote copies the code block", async () => {
+  const f = makeFixture([assistant(`${oneBlock}\n\n> Tell Dana it is tagged.`)]);
+
+  await f.altC();
+
+  assert.equal(f.selects.length, 0);
+  assert.deepEqual(f.copied, ["git tag pi-copy-v0.1.0 && git push --tags"]);
+});
+
+test("alt+c with two quotes and no code block opens the picker", async () => {
+  const f = makeFixture([assistant("For Dana:\n\n> Deck is ready.\n\nFor Sam:\n\n> Room is booked.")], (labels) => labels[1]);
+
+  await f.altC();
+
+  assert.equal(f.selects.length, 1);
+  assert.deepEqual(f.copied, ["Room is booked."]);
+});
+
 test("alt+c with two code blocks opens the picker and copies the choice", async () => {
   const f = makeFixture([assistant(twoBlocks)], (labels) => labels[1]);
 

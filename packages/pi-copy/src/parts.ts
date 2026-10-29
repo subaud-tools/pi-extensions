@@ -6,10 +6,12 @@
 // its text is marked's: fences and indent removed, no trailing newline.
 // Prose is rendered to plain text here: one line per paragraph, inline marks
 // dropped, links as `text (url)`, list markers kept, tables as source rows.
+// Each blockquote is a part too (a message for someone else, usually),
+// rendered like prose with its code in place.
 
 import { Lexer, type Token, type Tokens } from "marked";
 
-export type Part = { kind: "code" | "prose" | "all"; label: string; text: string };
+export type Part = { kind: "code" | "quote" | "prose" | "all"; label: string; text: string };
 
 const PREVIEW = 60;
 
@@ -25,6 +27,16 @@ function codeBlocks(tokens: Token[], out: Tokens.Code[] = []): Tokens.Code[] {
     if (token.type === "code") out.push(token as Tokens.Code);
     else if (token.type === "list") for (const item of (token as Tokens.List).items) codeBlocks(item.tokens, out);
     else if ("tokens" in token && Array.isArray(token.tokens)) codeBlocks(token.tokens, out);
+  }
+  return out;
+}
+
+// Every blockquote not inside another, in source order, wherever it sits.
+function quotes(tokens: Token[], out: Tokens.Blockquote[] = []): Tokens.Blockquote[] {
+  for (const token of tokens) {
+    if (token.type === "blockquote") out.push(token as Tokens.Blockquote);
+    else if (token.type === "list") for (const item of (token as Tokens.List).items) quotes(item.tokens, out);
+    else if ("tokens" in token && Array.isArray(token.tokens)) quotes(token.tokens, out);
   }
   return out;
 }
@@ -132,6 +144,10 @@ export function splitParts(markdown: string): Part[] {
     label: `Code block ${index + 1}${code.lang ? ` (${code.lang})` : ""}: ${preview(code.text)}`,
     text: codeText(code),
   }));
+  quotes(tokens).forEach((quote, index) => {
+    const text = blocks(quote.tokens, true).join("\n\n");
+    if (text !== "") parts.push({ kind: "quote", label: `Quote ${index + 1}: ${preview(text)}`, text });
+  });
   const prose = blocks(tokens, false).join("\n\n");
   if (prose === "") return parts;
   parts.push({ kind: "prose", label: `Prose: ${preview(prose)}`, text: prose });
@@ -139,7 +155,7 @@ export function splitParts(markdown: string): Part[] {
   return parts;
 }
 
-const NOUN: Record<Part["kind"], string> = { code: "code block", prose: "prose", all: "the whole answer" };
+const NOUN: Record<Part["kind"], string> = { code: "code block", quote: "quote", prose: "prose", all: "the whole answer" };
 
 export function notice(part: Part): string {
   const lines = part.text.split("\n").length;
