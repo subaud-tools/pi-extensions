@@ -112,14 +112,23 @@ test("an answer with only prose has the prose part alone", () => {
   );
 });
 
-test("an answer with only a code block has the block and all", () => {
+test("an answer with only a code block has only the block", () => {
   const parts = splitParts("```bash\nnpm publish --access public\n```");
 
   assert.deepEqual(
     parts.map((p) => p.kind),
-    ["code", "all"],
+    ["code"],
   );
-  assert.equal(parts[1]!.text, "npm publish --access public");
+  assert.equal(parts[0]!.text, "npm publish --access public");
+});
+
+test("a blank line before the closing fence leaves no trailing newline", () => {
+  const answer = "Run:\n\n```sh\necho ready\n\n```";
+
+  const parts = splitParts(answer);
+
+  assert.equal(parts[0]!.text, "echo ready");
+  assert.equal(parts[2]!.text, "Run:\n\necho ready");
 });
 
 test("parts come in order: each code block, then prose, then all with code in place", () => {

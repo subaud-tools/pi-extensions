@@ -29,6 +29,11 @@ function codeBlocks(tokens: Token[], out: Tokens.Code[] = []): Tokens.Code[] {
   return out;
 }
 
+// A code block's exact text, without the trailing newlines a blank line before the fence leaves.
+function codeText(code: Tokens.Code): string {
+  return code.text.replace(/\n+$/, "");
+}
+
 function inline(tokens: Token[] | undefined): string {
   if (!tokens) return "";
   return tokens.map(inlineToken).join("");
@@ -75,7 +80,7 @@ function blocks(tokens: Token[], withCode: boolean): string[] {
         out.push(oneLine(inline((token as Tokens.Paragraph).tokens)));
         break;
       case "code":
-        if (withCode) out.push((token as Tokens.Code).text);
+        if (withCode) out.push(codeText(token as Tokens.Code));
         break;
       case "list":
         out.push(list(token as Tokens.List, 0, withCode).join("\n"));
@@ -125,12 +130,12 @@ export function splitParts(markdown: string): Part[] {
   const parts: Part[] = codeBlocks(tokens).map((code, index) => ({
     kind: "code",
     label: `Code block ${index + 1}${code.lang ? ` (${code.lang})` : ""}: ${preview(code.text)}`,
-    text: code.text,
+    text: codeText(code),
   }));
-  const codeCount = parts.length;
   const prose = blocks(tokens, false).join("\n\n");
-  if (prose !== "") parts.push({ kind: "prose", label: `Prose: ${preview(prose)}`, text: prose });
-  if (codeCount > 0) parts.push({ kind: "all", label: "All of the answer", text: blocks(tokens, true).join("\n\n") });
+  if (prose === "") return parts;
+  parts.push({ kind: "prose", label: `Prose: ${preview(prose)}`, text: prose });
+  if (parts.length > 1) parts.push({ kind: "all", label: "All of the answer", text: blocks(tokens, true).join("\n\n") });
   return parts;
 }
 

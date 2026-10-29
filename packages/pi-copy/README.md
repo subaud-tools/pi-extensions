@@ -16,7 +16,7 @@ Pi's own `/copy` (Ctrl+X) copies the whole last answer as markdown source, fence
 - **The prose**: everything outside the code blocks, as plain text. Paragraphs are one line each, separated by a blank line; bold, italic, inline code and strike marks are removed; a link becomes `text (url)`, or just the address when the two are the same; headings are their text on a line of their own; list items keep `- ` or `1. ` with two spaces per nesting level; a blockquote loses its `>`; a table is copied as its markdown source rows.
 - **All**: the whole answer, the prose as above with each code block's text in place.
 
-An answer with no code blocks has only the prose part; one with no prose has its code blocks and all.
+An answer with no code blocks has only the prose part; one with no prose has only its code blocks.
 
 Only the last answer is read. An earlier answer can still be copied whole from `/tree` with Ctrl+X.
 
