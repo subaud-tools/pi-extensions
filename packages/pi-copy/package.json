@@ -1,6 +1,6 @@
 {
   "name": "pi-copy",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Copy one part of the last pi answer from its source text: a code block exactly as written, or the prose as plain text, through /copy-part and alt+c.",
   "type": "module",
   "license": "MIT",
