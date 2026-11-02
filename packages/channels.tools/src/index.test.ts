@@ -21,10 +21,14 @@ function fakePi(sessionId = "session-xyz", mode = "tui") {
   const tools = new Map<string, ToolDef>();
   const statuses: string[] = [];
   const emitted: Array<{ channel: string; data: any }> = [];
+  const listeners = new Map<string, Array<(data: unknown) => void>>();
   const pi = {
     events: {
       emit(channel: string, data: unknown) { emitted.push({ channel, data }); },
-      on(_channel: string, _handler: (data: unknown) => void) { return () => {}; },
+      on(channel: string, handler: (data: unknown) => void) {
+        listeners.set(channel, [...(listeners.get(channel) ?? []), handler]);
+        return () => {};
+      },
     },
     on(event: string, handler: Handler) {
       const list = handlers.get(event) ?? [];
@@ -55,7 +59,11 @@ function fakePi(sessionId = "session-xyz", mode = "tui") {
     for (const h of handlers.get(event) ?? []) out.push(await h(payload, ctx));
     return out;
   }
-  return { pi, ctx, fire, sent, customs, registered, unregistered, tools, statuses, emitted };
+  // What another extension emits on pi.events (pi-subagents' lifecycle).
+  function bus(channel: string, data: unknown): void {
+    for (const h of listeners.get(channel) ?? []) h(data);
+  }
+  return { pi, ctx, fire, bus, sent, customs, registered, unregistered, tools, statuses, emitted };
 }
 
 test("session_start never writes AGENT_SESSION_ID into the host environment", async () => {
@@ -486,9 +494,18 @@ test("a registerTool failure during session_start does not block the mail gate f
 // The lifecycle reports (notifications/channels/report): an event whose meta
 // carries a `report` token is reported back to its server as held, landed and
 // turn_ended. The fake server answers fake_status with what it received.
-async function reportsOf(tools: Map<string, ToolDef>): Promise<unknown[]> {
+async function allReportsOf(tools: Map<string, ToolDef>): Promise<Array<{ event: string }>> {
   const result = (await tools.get("fake_status")!.execute("c", {})) as { content: Array<{ text: string }> };
   return JSON.parse(result.content[0].text.replace(/^reports:/, ""));
+}
+
+// The event reports only; the activity reports have tests of their own below.
+async function reportsOf(tools: Map<string, ToolDef>): Promise<unknown[]> {
+  return (await allReportsOf(tools)).filter((r) => r.event !== "activity");
+}
+
+async function activityOf(tools: Map<string, ToolDef>): Promise<unknown[]> {
+  return (await allReportsOf(tools)).filter((r) => r.event === "activity");
 }
 
 function reportingFake(report?: string) {
@@ -563,4 +580,79 @@ test("an event without a report key sends no report at all", async () => {
   await fire("agent_settled");
   assert.deepEqual(await reportsOf(tools), []);
   await fire("session_shutdown");
+});
+
+// The activity report: working while a turn or a background agent runs, sent
+// to every connected server when that changes and each time a server connects.
+test("a server is told the session is idle when it connects at session_start", async () => {
+  const { pi, fire, tools } = fakePi();
+  createExtension(pi as never, { env: {}, loadConfig: reportingFake() });
+  try {
+    await fire("session_start", { reason: "startup" });
+    assert.deepEqual(await activityOf(tools), [{ event: "activity", working: false }]);
+  } finally {
+    await fire("session_shutdown");
+  }
+});
+
+test("a turn reports working at agent_start and idle at agent_settled", async () => {
+  const { pi, fire, tools } = fakePi();
+  createExtension(pi as never, { env: {}, loadConfig: reportingFake() });
+  try {
+    await fire("session_start", { reason: "startup" });
+    await fire("agent_start");
+    await fire("agent_settled");
+    assert.deepEqual(await activityOf(tools), [
+      { event: "activity", working: false },
+      { event: "activity", working: true },
+      { event: "activity", working: false },
+    ]);
+  } finally {
+    await fire("session_shutdown");
+  }
+});
+
+test("a background agent keeps the session working after its turn settles", async () => {
+  const { pi, fire, bus, tools } = fakePi();
+  createExtension(pi as never, { env: {}, loadConfig: reportingFake() });
+  try {
+    await fire("session_start", { reason: "startup" });
+    await fire("agent_start");
+    bus("subagents:started", { id: "a1", type: "worker", description: "build" });
+    bus("subagents:started", { id: "a2", type: "worker", description: "test" });
+    await fire("agent_settled");
+    bus("subagents:completed", { id: "a1" });
+    assert.deepEqual(await activityOf(tools), [
+      { event: "activity", working: false },
+      { event: "activity", working: true },
+    ], "still working while a2 runs");
+    bus("subagents:failed", { id: "a2" });
+    assert.deepEqual((await activityOf(tools)).at(-1), { event: "activity", working: false });
+  } finally {
+    await fire("session_shutdown");
+  }
+});
+
+test("a server that connects on a retry is told the current state", async () => {
+  const { pi, fire, tools } = fakePi();
+  const dir = mkdtempSync(join(tmpdir(), "pi-channels-activity-"));
+  const counterFile = join(dir, "count.txt");
+  try {
+    createExtension(pi as never, {
+      env: {},
+      loadConfig: () => ({
+        fake: { command: process.execPath, args: [FLAKY], env: { FLAKY_COUNTER_FILE: counterFile, FAKE_RECORD_REPORTS: "1" } },
+      }),
+      retryBaseMs: 200,
+      retryMaxMs: 200,
+    });
+    await fire("session_start", { reason: "startup" });
+    await fire("agent_start");
+    await new Promise((r) => setTimeout(r, 800));
+    assert.ok(tools.has("fake_status"), "the retry connected");
+    assert.deepEqual(await activityOf(tools), [{ event: "activity", working: true }]);
+  } finally {
+    await fire("session_shutdown");
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -4,6 +4,7 @@ import type { ChannelServerDef } from "./config.ts";
 import { ConnectionManager } from "./connection.ts";
 import type { Connection } from "./connection.ts";
 import { createWake } from "./wake.ts";
+import { createActivity } from "./activity.ts";
 import { normalizeSchema, resolveToolNames, toTextContent } from "./tools.ts";
 
 type Deps = {
@@ -41,6 +42,7 @@ export function createExtension(pi: any, deps: Deps = {}): void {
       } catch (error) {
         log(`re-registering tools after a retry reconnect failed: ${String(error)}`);
       }
+      reportActivity(connections);
     },
     ...(deps.retryBaseMs !== undefined ? { retryBaseMs: deps.retryBaseMs } : {}),
     ...(deps.retryMaxMs !== undefined ? { retryMaxMs: deps.retryMaxMs } : {}),
@@ -100,6 +102,18 @@ export function createExtension(pi: any, deps: Deps = {}): void {
       return false;
     });
   }
+
+  // The activity report: whether this session is working (a turn or a
+  // background agent is running), sent to every connected server on each
+  // change, and to every server each time one connects (session_start and a
+  // retry reconnect), so a server that restarted or came up late still knows.
+  const activity = createActivity(() => reportActivity(manager.connections()));
+  function reportActivity(connections: Connection[]): void {
+    for (const c of connections) manager.report(c.name, { event: "activity", working: activity.working() });
+  }
+  pi.events?.on?.("subagents:started", (data: unknown) => activity.backgroundStarted(data));
+  pi.events?.on?.("subagents:completed", (data: unknown) => activity.backgroundEnded(data));
+  pi.events?.on?.("subagents:failed", (data: unknown) => activity.backgroundEnded(data));
 
   const wake = createWake({
     onHeld: (event) => {
@@ -299,6 +313,7 @@ export function createExtension(pi: any, deps: Deps = {}): void {
       // tools and no further retry scheduled. connections() is a superset in
       // every other case.
       registerTools(manager.connections());
+      reportActivity(manager.connections());
     } catch (error) {
       log(`session_start failed: ${String(error)}`);
     } finally {
@@ -336,7 +351,10 @@ export function createExtension(pi: any, deps: Deps = {}): void {
     return undefined;
   });
 
-  pi.on("agent_start", () => wake.onAgentStart());
+  pi.on("agent_start", () => {
+    wake.onAgentStart();
+    activity.turnStarted();
+  });
   pi.on("agent_settled", () => {
     // Before the settle flushes held events: those land in the next turn.
     const ended = landedThisTurn;
@@ -344,6 +362,7 @@ export function createExtension(pi: any, deps: Deps = {}): void {
     for (const [source, report] of ended) manager.report(source, { event: "turn_ended", report });
     wake.onAgentSettled();
     announcePending();
+    activity.turnSettled();
   });
   pi.on("session_shutdown", async () => { await manager.closeAll(); });
 }
