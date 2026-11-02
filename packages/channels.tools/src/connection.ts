@@ -10,10 +10,14 @@ export const CHANNEL_NOTIFICATION = "notifications/claude/channel";
 // Sent back to a channel server about an event it marked with a `report` meta
 // key: held (buffered mid-turn), landed (its envelope is in a turn's
 // context), turn_ended (the turn it landed in settled). A notification needs
-// no answer, so a server that does not know it is unaffected.
+// no answer, so a server that does not know it is unaffected. Also carries
+// activity, sent to every server: whether the session is working (a turn or a
+// background agent is running), on each change and each time it connects.
 export const REPORT_NOTIFICATION = "notifications/channels/report";
 
-export type Report = { event: "held" | "landed" | "turn_ended"; report: string };
+export type Report =
+  | { event: "held" | "landed" | "turn_ended"; report: string }
+  | { event: "activity"; working: boolean };
 
 const PROTOCOL_VERSION = "2025-06-18";
 const RETRY_BASE_MS = 30_000;
