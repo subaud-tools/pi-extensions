@@ -67,7 +67,7 @@ export function record(bin: string, command: string, cwd: string, sessionId: str
  * fork's parent runs in another pi process (a fork started as a pi process
  * of its own) or has ended
  * (an in-process `/fork` replaces it, and this extension reports it ended).
- * So a fork, even one running subagents of its own, stays a session Court
+ * So a fork, even one running subagents of its own, stays a session the user
  * can choose; its subagents don't.
  */
 export interface SessionFacts {

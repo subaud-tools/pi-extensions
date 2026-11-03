@@ -65,7 +65,7 @@ export default function casebook(pi: ExtensionAPI) {
     if (event.reason !== "reload") syncInBackground(bin);
   });
 
-  // Court renamed the session (pi's /name): the page shows the new name.
+  // The user renamed the session (pi's /name): the page shows the new name.
   pi.on("session_info_changed", () => reportInfo());
 
   pi.on("tool_result", (event) => {

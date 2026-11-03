@@ -87,7 +87,7 @@ test("tells casebook the session's name at start, on every rename, and at each t
   let log = readFileSync(f.log, "utf8");
   assert.match(log, new RegExp(`ARGS session-info --harness pi --session pi-7 --name hail/fix --cwd /w/hail --pid ${process.pid}\\b`), log);
   assert.doesNotMatch(log, /--parent/);
-  // Court renames the session.
+  // The user renames the session.
   name = "hail/owner";
   await handlers.session_info_changed({ type: "session_info_changed", name }, c);
   await wait(300);
