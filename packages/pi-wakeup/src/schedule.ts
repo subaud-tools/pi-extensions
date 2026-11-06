@@ -120,3 +120,35 @@ export function decideDisplayMode(
   if (left.includes("@wakeup") || right.includes("@wakeup")) return "tmux";
   return "widget";
 }
+
+// --- Pending wakeups file --------------------------------------------------
+// Each session's pending wakeups are written to <stateDir>/<session id>.json so
+// other programs can see them: diazo's machine verdict reads them to keep a
+// workspace up for, and wake it before, a scheduled check. Pure here (path and
+// shape); the atomic write lives in index.ts.
+
+// $XDG_STATE_HOME/pi-wakeup, or ~/.local/state/pi-wakeup. The XDG spec says a
+// relative XDG_STATE_HOME is invalid and is ignored.
+export function stateDir(env: { XDG_STATE_HOME?: string }, home: string): string {
+  const xdg = env.XDG_STATE_HOME;
+  const base = xdg && xdg.startsWith("/") ? xdg : `${home}/.local/state`;
+  return `${base}/pi-wakeup`;
+}
+
+export type PendingState = {
+  session: string;
+  wakeups: Array<{ fire_at: string; reason: string }>;
+};
+
+// The file's content: soonest first, each fire time RFC 3339 in UTC with the
+// milliseconds dropped (a reader waking a little early is harmless).
+export function pendingState(session: string, pending: PendingView[]): PendingState {
+  const sorted = [...pending].sort((a, b) => a.fireAtMs - b.fireAtMs);
+  return {
+    session,
+    wakeups: sorted.map((w) => ({
+      fire_at: new Date(w.fireAtMs).toISOString().replace(/\.\d{3}Z$/, "Z"),
+      reason: w.reason ?? "",
+    })),
+  };
+}

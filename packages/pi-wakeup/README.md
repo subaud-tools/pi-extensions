@@ -31,6 +31,7 @@ Every tmux / UI call is best-effort: a failure in a timer callback is caught and
 - **Busy-gated delivery.** `agent_start` / `agent_settled` track whether a turn is running; delivery picks `steer` (idle) or `followUp` (busy) accordingly, so a wakeup never interrupts a turn in flight.
 - **Best-effort.** Every handler and the timer callback swallow-and-log on error — a missed wakeup must never take the session process down. The pure decisions (clamp, delivery mode, message shape) live in `src/schedule.ts` and are unit-tested with zero mocking; `src/index.ts` is the thin pi wiring, in the same split the guardrails package uses.
 - **Persistence.** Each schedule / fire / cancel is written with `pi.appendEntry` so the session transcript records the wakeup lifecycle.
+- **Visible to other programs.** The pending wakeups are also written to `$XDG_STATE_HOME/pi-wakeup/<session id>.json` (`~/.local/state/pi-wakeup` by default): `{"session":"<id>","wakeups":[{"fire_at":"2026-11-06T18:10:00Z","reason":"CI"}]}`, soonest first, fire times in UTC. It is rewritten atomically on every schedule, fire and cancel and removed when none are pending or the session ends, so a workspace's idle stop can keep the machine up for a pending wakeup and start it again before one.
 
 ## Known follow-up
 
