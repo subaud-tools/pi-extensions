@@ -21,13 +21,24 @@
 // wakeups fire, including across /reload: a reload shuts this extension down
 // and loads a fresh copy in the same process, so shutdown hands the pending
 // wakeups to the new copy through a global, which re-arms them on start.
+//
+// Visibility: the pending wakeups are also written to
+// $XDG_STATE_HOME/pi-wakeup/<session id>.json (~/.local/state by default) on
+// every schedule, fire and cancel, atomically (temp file + rename), and the
+// file is removed when none are pending or the session ends. A workspace's
+// idle stop reads it, so a session waiting on a wakeup keeps the machine up.
 
 import { execFileSync } from "node:child_process";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   clampDelaySeconds,
   decideDisplayMode,
   deliveryMode,
   formatCountdown,
+  pendingState,
+  stateDir as defaultStateDir,
   wakeupMessage,
 } from "./schedule.ts";
 
@@ -58,6 +69,8 @@ export type Deps = {
   runTmux?: (socket: string, args: string[]) => string | undefined;
   // The environment the tmux mode decision reads ($TMUX / $TMUX_PANE).
   env?: NodeJS.ProcessEnv;
+  // Where the pending-wakeups file is written; defaults from $XDG_STATE_HOME.
+  stateDir?: string;
 };
 
 const SCHEDULE_PARAMS = {
@@ -132,6 +145,7 @@ export function createWakeup(pi: any, deps: Deps = {}): void {
       }
     });
   const env = deps.env ?? process.env;
+  const stateDir = deps.stateDir ?? defaultStateDir(env, homedir());
 
   const pending = new Map<string, Pending>();
   const timers = new Map<string, unknown>();
@@ -139,6 +153,8 @@ export function createWakeup(pi: any, deps: Deps = {}): void {
   // tool call; deliver() reads ctx.isIdle() at fire time.
   let ctx: any;
   let counter = 0;
+  // This session's id, read at session_start; names the pending-wakeups file.
+  let sessionId: string | undefined;
 
   // Countdown display state, decided ONCE at session_start. In tmux mode we set
   // a pane-session option the status line renders; otherwise we draw a widget
@@ -267,6 +283,31 @@ export function createWakeup(pi: any, deps: Deps = {}): void {
     }
   }
 
+  function stateFile(): string | undefined {
+    return sessionId ? join(stateDir, `${sessionId}.json`) : undefined;
+  }
+
+  // Write the pending set to the state file, or remove it when nothing is
+  // pending. Best-effort: a failure is logged and never fails a tool call, a
+  // timer callback or a shutdown.
+  function writeState(): void {
+    const file = stateFile();
+    if (!file) return;
+    try {
+      if (pending.size === 0) {
+        rmSync(file, { force: true });
+        return;
+      }
+      const view = [...pending.values()].map((p) => ({ fireAtMs: p.fireAtMs, reason: p.reason }));
+      mkdirSync(stateDir, { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      writeFileSync(tmp, `${JSON.stringify(pendingState(sessionId!, view))}\n`);
+      renameSync(tmp, file);
+    } catch (error) {
+      log(`state file write failed: ${String(error)}`);
+    }
+  }
+
   function forget(id: string): void {
     const handle = timers.get(id);
     if (handle !== undefined) clearTimer(handle);
@@ -281,6 +322,7 @@ export function createWakeup(pi: any, deps: Deps = {}): void {
     // leave a half-fired wakeup armed. Refresh the countdown off the firing.
     forget(id);
     syncDisplay();
+    writeState();
     // Reading ctx.isIdle() can THROW: a ctx captured at session_start goes
     // stale after /reload, fork, or a session switch (assertActive() throws),
     // and this runs up to an hour later inside a setTimeout callback where an
@@ -325,6 +367,12 @@ export function createWakeup(pi: any, deps: Deps = {}): void {
 
   pi.on("session_start", (event: any, sessionCtx: any) => {
     ctx = sessionCtx;
+    try {
+      const id = sessionCtx?.sessionManager?.getSessionId?.();
+      sessionId = typeof id === "string" && id ? id : undefined;
+    } catch {
+      sessionId = undefined;
+    }
     // Decide the display target once, now, from the env + tmux status strings.
     decideDisplay();
     const store = globalThis as Record<symbol, Handoff | undefined>;
@@ -339,6 +387,8 @@ export function createWakeup(pi: any, deps: Deps = {}): void {
     }
     // Shows the re-armed wakeups, or clears any stale display.
     syncDisplay();
+    // Writes the re-armed wakeups, or removes a file a crashed run left behind.
+    writeState();
   });
   pi.on("session_shutdown", (event: any) => {
     if (event?.reason === "reload") {
@@ -351,6 +401,9 @@ export function createWakeup(pi: any, deps: Deps = {}): void {
     // Clear the display: with pending now empty, refresh() unsets the option /
     // removes the widget.
     refresh();
+    // The session ends: remove its file. A reload keeps it, since the new copy
+    // re-arms the same wakeups and rewrites it on start.
+    if (event?.reason !== "reload") writeState();
   });
 
   pi.registerTool({
@@ -384,6 +437,7 @@ export function createWakeup(pi: any, deps: Deps = {}): void {
       }
       // Show the new wakeup and arm the refresh loop.
       syncDisplay();
+      writeState();
       const reasonText = reason ? ` (${reason})` : "";
       return {
         content: [{ type: "text", text: `Scheduled ${id}: waking in ${delay}s${reasonText}.` }],
@@ -411,6 +465,7 @@ export function createWakeup(pi: any, deps: Deps = {}): void {
           }
           // Update (or clear) the countdown now that one is gone.
           syncDisplay();
+          writeState();
         }
         return {
           content: [
@@ -428,6 +483,7 @@ export function createWakeup(pi: any, deps: Deps = {}): void {
         }
         // Everything's gone: clear the display and stop the refresh loop.
         syncDisplay();
+        writeState();
       }
       return { content: [{ type: "text", text: `Cancelled ${count} pending wakeup${count === 1 ? "" : "s"}.` }] };
     },

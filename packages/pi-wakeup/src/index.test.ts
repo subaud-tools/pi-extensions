@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createWakeup } from "./index.ts";
 import type { Deps } from "./index.ts";
 
@@ -24,8 +27,13 @@ function harness(
     // The session_start event (a reload re-arms handed-over wakeups) and clock.
     startEvent?: unknown;
     nowMs?: number;
+    // Where the pending-wakeups file goes; a fresh temp dir by default so no
+    // test writes to the real ~/.local/state.
+    stateDir?: string;
+    sessionId?: string;
   } = {},
 ) {
+  const stateDir = opts.stateDir ?? mkdtempSync(join(tmpdir(), "pi-wakeup-test-"));
   const idle = opts.idle ?? true;
   const tools = new Map<string, any>();
   const handlers = new Map<string, (event?: unknown, ctx?: unknown) => void>();
@@ -38,6 +46,7 @@ function harness(
   const widgetCalls: WidgetCall[] = [];
 
   const ctx = {
+    sessionManager: { getSessionId: () => opts.sessionId ?? "sess-1" },
     isIdle: () => {
       if (opts.idleThrows) throw new Error("stale ctx");
       return idle;
@@ -97,6 +106,7 @@ function harness(
       return "";
     },
     env: opts.env ?? {},
+    stateDir,
   };
 
   createWakeup(pi, deps);
@@ -111,7 +121,12 @@ function harness(
   };
   const tmuxSets = () =>
     tmuxCalls.filter((c) => c.args[0] === "set-option");
+  const stateFile = join(stateDir, `${opts.sessionId ?? "sess-1"}.json`);
+  const readState = () => JSON.parse(readFileSync(stateFile, "utf-8"));
   return {
+    stateDir,
+    stateFile,
+    readState,
     tools,
     handlers,
     sent,
@@ -367,4 +382,73 @@ test("session_shutdown clears the display and stops the refresh interval", async
   h.handlers.get("session_shutdown")!();
   assert.equal(h.widgetCalls.at(-1)!.lines, undefined); // cleared
   assert.equal(h.intervals[0].cancelled, true);
+});
+
+// --- Pending wakeups file --------------------------------------------------
+
+test("state file: a scheduled wakeup appears with its fire time in UTC and its reason", async () => {
+  const h = harness({ nowMs: Date.UTC(2026, 10, 6, 18, 0, 0) });
+  await h.schedule({ delay_seconds: 600, prompt: "x", reason: "CI" });
+  await h.schedule({ delay_seconds: 120, prompt: "y" });
+  assert.deepEqual(h.readState(), {
+    session: "sess-1",
+    wakeups: [
+      { fire_at: "2026-11-06T18:02:00Z", reason: "" },
+      { fire_at: "2026-11-06T18:10:00Z", reason: "CI" },
+    ],
+  });
+  // Written atomically: no temp file is left beside it.
+  assert.deepEqual(readdirSync(h.stateDir), ["sess-1.json"]);
+});
+
+test("state file: a fired wakeup leaves it, and the file goes when none are pending", async () => {
+  const h = harness();
+  await h.schedule({ delay_seconds: 120, prompt: "a", reason: "first" });
+  await h.schedule({ delay_seconds: 300, prompt: "b", reason: "second" });
+  h.fire(h.timers[0]);
+  assert.deepEqual(h.readState().wakeups.map((w: any) => w.reason), ["second"]);
+  h.fire(h.timers[1]);
+  assert.equal(existsSync(h.stateFile), false);
+});
+
+test("state file: a cancelled wakeup leaves it; cancelling all removes the file", async () => {
+  const h = harness();
+  await h.schedule({ delay_seconds: 120, prompt: "a", reason: "first" });
+  await h.schedule({ delay_seconds: 300, prompt: "b", reason: "second" });
+  await h.schedule({ delay_seconds: 400, prompt: "c", reason: "third" });
+  await h.cancel({ id: "wake-1" });
+  assert.deepEqual(h.readState().wakeups.map((w: any) => w.reason), ["second", "third"]);
+  await h.cancel({});
+  assert.equal(existsSync(h.stateFile), false);
+});
+
+test("state file: a session end removes it", async () => {
+  const h = harness();
+  await h.schedule({ delay_seconds: 120, prompt: "a" });
+  assert.ok(existsSync(h.stateFile));
+  h.handlers.get("session_shutdown")!({ reason: "quit" });
+  assert.equal(existsSync(h.stateFile), false);
+});
+
+test("state file: a /reload keeps it, and the new copy writes what it re-armed", async () => {
+  const before = harness();
+  await before.schedule({ delay_seconds: 120, prompt: "a", reason: "ci" });
+  before.handlers.get("session_shutdown")!({ reason: "reload" });
+  assert.ok(existsSync(before.stateFile), "kept across the reload gap");
+  const after = harness({ startEvent: { reason: "reload" }, stateDir: before.stateDir, nowMs: 31_000 });
+  assert.deepEqual(after.readState().wakeups.map((w: any) => w.reason), ["ci"]);
+});
+
+test("state file: a fresh start clears a stale file left by a crash", async () => {
+  const before = harness();
+  await before.schedule({ delay_seconds: 120, prompt: "a" });
+  // No shutdown: the process died. The next start of the same session clears it.
+  const after = harness({ stateDir: before.stateDir });
+  assert.equal(existsSync(after.stateFile), false);
+});
+
+test("state file: an unwritable state dir never fails the schedule", async () => {
+  const h = harness({ stateDir: "/dev/null/pi-wakeup" });
+  const res = await h.schedule({ delay_seconds: 120, prompt: "a" });
+  assert.match(res.content[0].text, /Scheduled wake-1/);
 });

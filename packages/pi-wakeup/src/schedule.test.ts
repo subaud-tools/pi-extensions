@@ -6,6 +6,8 @@ import {
   deliveryMode,
   formatCountdown,
   formatRemaining,
+  pendingState,
+  stateDir,
   truncateReason,
   wakeupMessage,
   MAX_REASON_LENGTH,
@@ -130,4 +132,27 @@ test("decideDisplayMode: no tmux env is always the widget", () => {
   assert.equal(decideDisplayMode({}, "@wakeup", "@wakeup"), "widget");
   assert.equal(decideDisplayMode({ TMUX: "/tmp/sock,1,0" }, "@wakeup", "@wakeup"), "widget");
   assert.equal(decideDisplayMode({ TMUX_PANE: "%3" }, "@wakeup", "@wakeup"), "widget");
+});
+
+test("stateDir: XDG_STATE_HOME wins, else ~/.local/state, each under pi-wakeup", () => {
+  assert.equal(stateDir({ XDG_STATE_HOME: "/x/state" }, "/home/u"), "/x/state/pi-wakeup");
+  assert.equal(stateDir({}, "/home/u"), "/home/u/.local/state/pi-wakeup");
+  assert.equal(stateDir({ XDG_STATE_HOME: "" }, "/home/u"), "/home/u/.local/state/pi-wakeup");
+  assert.equal(stateDir({ XDG_STATE_HOME: "relative" }, "/home/u"), "/home/u/.local/state/pi-wakeup");
+});
+
+test("pendingState: soonest first, RFC 3339 UTC with no milliseconds", () => {
+  assert.deepEqual(
+    pendingState("s", [
+      { fireAtMs: Date.UTC(2026, 0, 2, 3, 4, 5, 678), reason: "later" },
+      { fireAtMs: Date.UTC(2026, 0, 1), reason: "" },
+    ]),
+    {
+      session: "s",
+      wakeups: [
+        { fire_at: "2026-01-01T00:00:00Z", reason: "" },
+        { fire_at: "2026-01-02T03:04:05Z", reason: "later" },
+      ],
+    },
+  );
 });
