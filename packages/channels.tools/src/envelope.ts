@@ -47,9 +47,10 @@ function escapeAttr(value: string): string {
 }
 
 // Text inside the wrapper must not be able to close it: the "<" of any
-// "</channel" is escaped, and nothing else in the text is touched.
+// "</channel" (spaces around the slash included) is escaped, and nothing else
+// in the text is touched.
 function keepInside(text: string): string {
-  return text.replace(/<(?=\/channel)/gi, "&lt;");
+  return text.replace(/<(?=\s*\/\s*channel)/gi, "&lt;");
 }
 
 // renderSummary is the VISIBLE half of a delivery: one short line per event
