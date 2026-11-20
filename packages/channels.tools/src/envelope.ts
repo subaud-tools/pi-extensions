@@ -11,8 +11,11 @@ const GUIDANCE_SENTINEL = "\n\n---\n";
 // as the least urgent thing in the batch.
 const STRICTNESS = ["fyi", "reply-requested", "action-requested"];
 
+// A server appends its guidance after its own separator, at the end, so the
+// split is on the LAST sentinel: one inside the body (text other people may
+// have written) stays body and is never promoted to guidance.
 export function splitGuidance(content: string): { body: string; guidance?: string } {
-  const at = content.indexOf(GUIDANCE_SENTINEL);
+  const at = content.lastIndexOf(GUIDANCE_SENTINEL);
   if (at < 0) return { body: content };
   return {
     body: content.slice(0, at),
@@ -41,6 +44,13 @@ function escapeAttr(value: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+// Text inside the wrapper must not be able to close it: the "<" of any
+// "</channel" (spaces around the slash included) is escaped, and nothing else
+// in the text is touched.
+function keepInside(text: string): string {
+  return text.replace(/<(?=\s*\/\s*channel)/gi, "&lt;");
 }
 
 // renderSummary is the VISIBLE half of a delivery: one short line per event
@@ -109,5 +119,5 @@ export function renderBatch(source: string, events: ChannelEvent[]): string {
   const parts = [bodies.join("\n")];
   if (guidance.length > 0) parts.push(guidance.join("\n\n"));
 
-  return `<channel source="${escapeAttr(source)}" ${rendered}>\n${parts.join("\n\n---\n")}\n</channel>`;
+  return `<channel source="${escapeAttr(source)}" ${rendered}>\n${keepInside(parts.join(GUIDANCE_SENTINEL))}\n</channel>`;
 }
