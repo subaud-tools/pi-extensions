@@ -50,8 +50,8 @@ test("buildRegisterArgs carries identity and tmux facts when present", () => {
     work: "contests",
     dir: "/abs",
     piVersion: "0.85.1",
-    identity: "proj",
-    tmux: { socket: "/private/tmp/tmux-501/proj-bettor-help", session: "bettor-help/contests", pane: "%3" },
+    identity: "cast",
+    tmux: { socket: "/private/tmp/tmux-501/cast-bettor-help", session: "bettor-help/contests", pane: "%3" },
   });
   assert.deepEqual(args, {
     sessionId: "pi-7",
@@ -60,9 +60,9 @@ test("buildRegisterArgs carries identity and tmux facts when present", () => {
     dir: "/abs",
     piVersion: "0.85.1",
     extensionVersion: EXTENSION_VERSION,
-    identity: "proj",
+    identity: "cast",
     tmux: true,
-    tmuxSocket: "/private/tmp/tmux-501/proj-bettor-help",
+    tmuxSocket: "/private/tmp/tmux-501/cast-bettor-help",
     tmuxSession: "bettor-help/contests",
     tmuxPane: "%3",
   });

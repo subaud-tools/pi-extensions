@@ -241,7 +241,7 @@ test("daemon pane registers with its @hail_session task id", async () => {
 
 /** Run `fn` with $TMUX set as inside a pane, restoring the bare-terminal env after. */
 async function inTmux(fn: () => Promise<void>): Promise<void> {
-  process.env.TMUX = "/private/tmp/tmux-501/proj,1,0";
+  process.env.TMUX = "/private/tmp/tmux-501/cast-tools-workspace,1,0";
   process.env.TMUX_PANE = "%5";
   try {
     await fn();
@@ -251,7 +251,7 @@ async function inTmux(fn: () => Promise<void>): Promise<void> {
   }
 }
 
-const factsLine = (session: string) => `\t${session}\twin\t/private/tmp/tmux-501/proj\t%5\n`;
+const factsLine = (session: string) => `\t${session}\twin\t/private/tmp/tmux-501/cast-tools-workspace\t%5\n`;
 const registers = (fake: FakeDuplex) =>
   fake.writes.map((w) => JSON.parse(w)).filter((f) => f.cmd === "session.register");
 
@@ -279,7 +279,7 @@ test("in tmux, a failed facts read retries and registers once under the pane's s
     await new Promise((r) => setTimeout(r, 700));
     const regs = registers(fake);
     assert.equal(regs.length, 1, "registers exactly once after the retry");
-    assert.equal(regs[0].args.identity, "proj");
+    assert.equal(regs[0].args.identity, "cast");
     assert.equal(regs[0].args.project, "tools-workspace");
     assert.equal(regs[0].args.work, "hail-coordinator");
     assert.equal(reads, 2);
@@ -310,7 +310,7 @@ test("in tmux, a reconnect after the facts change registers the new identity", a
     assert.equal(regs.length, 2);
     assert.equal(regs[0].args.work, "one");
     assert.equal(regs[1].args.work, "two");
-    assert.equal(regs[1].args.identity, "proj");
+    assert.equal(regs[1].args.identity, "cast");
   });
 });
 

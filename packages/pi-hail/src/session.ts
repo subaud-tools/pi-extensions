@@ -9,6 +9,7 @@ import { isAbortFrame, type Phone, type PromptImage, type RegisterArgs, type Reg
 import { entriesAfter, PERSISTED_ROLES, trimFrames } from "./replay.ts";
 import { presenceToStatus } from "./status.ts";
 import { EXTENSION_VERSION } from "./version.ts";
+import type { IdentitySource } from "./identity.ts";
 
 /**
  * Strip the duplicate cumulative snapshot pi carries on a streaming progress
@@ -168,7 +169,7 @@ export interface RegisterInput {
   piSessionId?: string;
   /** A random id per pi-hail instance (spec §9). */
   instanceId?: string;
-  identity?: "hail" | "proj" | "fallback";
+  identity?: IdentitySource;
   tmux?: { socket?: string; session?: string; pane?: string };
   /** The pane's current session-file position (streaming spec §4.1). */
   cursor?: number;
@@ -570,7 +571,7 @@ export class Session {
       } else if (v === "unavailable") {
         this.connected = false;
         this.deps.ui.notify(
-          "hail: this session isn't shared with your phone (only proj/tmux sessions can connect).",
+          "hail: this session isn't shared with your phone (only cast/tmux sessions can connect).",
           "info",
         );
       }

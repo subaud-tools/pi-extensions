@@ -66,7 +66,7 @@ Mac dialog stays the only way to answer.
 
 ## Connect / Disconnect (0.3.0)
 
-Sessions running inside tmux under proj's `project/work` naming stream to your
+Sessions running inside tmux under cast's `project/work` naming stream to your
 phone automatically and stay openable even with the Mac asleep. The status line
 shows `hail: disconnected · /hail connect` while disconnected.
 

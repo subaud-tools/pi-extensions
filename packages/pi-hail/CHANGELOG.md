@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0
+
+- pi-hail reports a tmux session named `project/work` with identity `cast`, the session tool that was called proj. hail 0.10.0 adopts it; earlier hail adopts only `proj`. The types still accept `proj`, which hail keeps accepting from earlier pi-hail.
+
 ## 0.8.0
 
 - A phone Stop stops pi: the daemon's `{ abort: {} }` frame calls pi's abort once while a turn runs, and does nothing when pi is idle.
