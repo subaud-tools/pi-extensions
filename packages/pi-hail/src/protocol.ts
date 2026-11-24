@@ -2,6 +2,8 @@
 // daemon's Unix control socket. Types below mirror the C4 wire reference
 // verbatim. The three functions are pure (no I/O).
 
+import type { IdentitySource } from "./identity.ts";
+
 export type PresenceState = "connected" | "driving" | "offline";
 
 export interface Phone {
@@ -26,7 +28,7 @@ export interface RegisterArgs {
    *  instance from another across a slot's lifetime. */
   instanceId?: string;
   /** Which identity rule produced project/work (spec §4.1). Omitted by 0.1.x. */
-  identity?: "hail" | "proj" | "fallback";
+  identity?: IdentitySource;
   /** Present (true) only when the session is tmux-hosted. */
   tmux?: boolean;
   tmuxSocket?: string;

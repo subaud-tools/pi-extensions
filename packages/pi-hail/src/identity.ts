@@ -1,6 +1,6 @@
 // Canonical session identity (spec §4.1). Pure; no I/O. Precedence:
 //   1. hail-owned (@hail_session set)  → today's identity, unchanged
-//   2. proj convention (tmux session name "project/work", both parts valid)
+//   2. cast convention (tmux session name "project/work", both parts valid)
 //   3. fallback (cwd basename / window name) — never adoptable
 import { basename } from "node:path";
 
@@ -20,7 +20,11 @@ export interface TmuxFacts {
   paneId?: string;
 }
 
-export type IdentitySource = "hail" | "proj" | "fallback";
+/**
+ * Where a session's identity came from. pi-hail reports "cast"; "proj" is
+ * what releases before cast's rename reported, and hail still accepts it.
+ */
+export type IdentitySource = "hail" | "cast" | "proj" | "fallback";
 
 export interface Identity {
   sessionId: string;
@@ -38,7 +42,7 @@ export function deriveIdentity(f: TmuxFacts, piSessionId: string, cwd: string): 
   if (name) {
     const parts = name.split("/");
     if (parts.length === 2 && validName(parts[0]) && validName(parts[1])) {
-      return { sessionId: piSessionId, project: parts[0], work: parts[1], identity: "proj" };
+      return { sessionId: piSessionId, project: parts[0], work: parts[1], identity: "cast" };
     }
   }
   return { sessionId: piSessionId, project: base, work: f.windowName ?? base, identity: "fallback" };

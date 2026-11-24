@@ -24,7 +24,7 @@
 //   startup (F24).
 //
 // HOW TO RUN (on a clean host):
-//   1. Build the daemon from a hail checkout on main (F21 gives the proj-probe
+//   1. Build the daemon from a hail checkout on main (F21 gives the cast-probe
 //      a timeout, F22 the keychain-service override):
 //        (cd /path/to/hail && go build -o /tmp/hail ./cmd/hail)
 //   2. HAIL_INTEGRATION=1 HAIL_BIN=/tmp/hail \
@@ -96,9 +96,9 @@ test(
     for (const d of ["run", "state", "config/hail"]) {
       mkdirSync(join(root, d), { recursive: true });
     }
-    // provider=builtin keeps the daemon off the `proj` auto-probe. With F21's
+    // provider=builtin keeps the daemon off the `cast` auto-probe. With F21's
     // probe timeout this is no longer required, but it is harmless and keeps
-    // the test fast on a host that happens to have a `proj` on PATH.
+    // the test fast on a host that happens to have a `cast` on PATH.
     writeFileSync(join(root, "config/hail/config.toml"), 'provider = "builtin"\n');
 
     const sockPath = join(root, "run", "hail", "daemon.sock");
